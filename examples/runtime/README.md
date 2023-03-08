@@ -23,8 +23,15 @@ Depending on the number of cores you wish to use (referred to henceforth as `<D>
 
 ```
 seq 1 <M> | xargs -n 1 -P <D> Rscript single_causl_runtime.R -l
+Rscript concatenate_causl_runs.R
 ```
 
-which will run each simulation run on a separate processor, outputing the results of each run as a separate csv within the subdirectory `/data/`.
+which will run each simulation run on a separate processor, outputing the results of each run as a separate csv within the subdirectory `/data/`. The following scrip unifies these separate files into one single csv.
 
-A script to unify these separate files into one single results file will be made shortly....
+## Python Runs
+To generate runtimes for `frugalCopyla`, combine them with the `causl` iterations and plot the results, run the following:
+```
+python frugalCopyla_runtime.csv
+Rscript concatenate_data.R
+Rscript figures_and_analysis.R
+```
