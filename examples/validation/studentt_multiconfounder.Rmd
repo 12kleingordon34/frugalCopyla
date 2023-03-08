@@ -1,0 +1,131 @@
+---
+title: "Exploration of Highly Correlated Simulated Data"
+author: "Dan Manela"
+date: "24/11/2022"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Comparison of Methods}
+  %\VignetteEncoding{UTF-8}
+  %\VignetteEngine{knitr::rmarkdown}
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  echo = TRUE,
+  comment = "#>",
+  cache = FALSE,
+  fig.width=7, 
+  fig.height=7
+)
+# knitr::knit_theme$set("earendel")
+```
+
+As always, we begin by loading the package.
+
+```{r load, include=TRUE, message=FALSE}
+library(causl)
+library(ggplot2)
+library(purrr)
+library(rjson)
+library(survey)
+library(matlib)
+library(ivreg)
+library(reshape2)
+library(tidyverse)
+```
+
+## Context
+
+In this example we work with the following model:
+
+$$ Z_1\sim\mathcal{N}(1, 1) \\ Z_2 \sim \mathcal{N}(1,
+1) \\ X~\|~Z_1, Z_2\sim\mathcal{N}( \rho_{XZ_1} Z + 0.5\cdot
+Z_2,1 - \rho_{XZ_1}^{2}) \\ Y~\|~\text{do}(X) \sim \mathcal{N}(X -
+0.5,1) $$
+
+with all correlation coefficients on the Gaussian copula equal to:
+
+$$
+\rho_{F(Z_1),F(Z_2)} = 0.9 \\
+\rho_{F(Z_1),F(Y)} = 0.3 \\
+\rho_{F(Z_2),F(Y)} = 0.1
+$$
+
+Through some algebraic manipulation, we can show that mean of $Y$
+conditioned on all variables in this model is equal to:
+
+$$
+\mathbb{E}[Y~|~Z_1=z_1, Z_2=z_2, \text{do}(X=x)] = x + 1.10523\cdot z_1 -0.894 \cdot z_2 - 0.71052
+$$
+
+The true expected values all fall within the (narrow) uncertainty
+estimates generated from our data.
+
+## Outcome Regression
+Logging some relevant figures here for analysis. The coefficients used to generate the data were:
+```{r}
+beta = 0.5
+rho_zz = beta/sqrt(1 + beta^2)
+# rho_zz = 0
+rho_yz1 = 0.2
+rho_yz2 = 0.5
+sigma_z1 = 1
+sigma_z2 = sqrt(1+beta^2)
+# sigma_z2 = 1
+```
+
+The analytic linear $Z$ coefficients are:
+```{r}
+corr = matrix(c(1, rho_zz, rho_yz1, rho_zz, 1, rho_yz2, rho_yz1, rho_yz2, 1), nrow=3, ncol=3)
+all(eigen(corr)$values > 0)
+Sig_zz = corr[1:2, 1:2]
+Sig_yz = corr[3, 1:2]
+z_coeffs = Sig_yz %*% inv(Sig_zz) * matrix(c(1/sigma_z1, 1/sigma_z2), nrow=1, ncol=2)
+z_coeffs
+```
+
+### Regression on model A
+
+```{r}
+data <- list()
+paths <- list.files('validation_datasets/multivar_studentt/', full.names=TRUE)
+rhos <- c(0.2, 0.4)#, 0.6, 0.8)
+
+for (i in 1:length(rhos)) {
+  path <- paths[i]
+  rho <- rhos[i]
+  print('================================================')
+  print(paste0('For dataset: ', path))
+  print('================================================')  
+  print('')
+  cop_data <- suppressMessages(read_csv(path))
+  or_rho <- suppressMessages(lm(Y ~ X + Z1 + Z2, data=cop_data))
+  z_regression <- suppressMessages(lm(Z2 ~ Z1, data=cop_data))
+
+  
+  results <- as_tibble(summary(or_rho)$coef) %>%
+    mutate(true_coefs=c(-0.5, 1, z_coeffs[1], z_coeffs[2])) %>%
+    mutate(ub=Estimate + 2 * `Std. Error`) %>%
+    mutate(lb=Estimate - 2 * `Std. Error`) %>%
+    mutate(
+      is_true_coef_in_estimate_range=if_else(
+        (ub> true_coefs) & (lb < true_coefs)
+      , TRUE, FALSE)
+    ) %>%
+    dplyr::select(-`t value`, `Pr(>|t|)`)
+  print(summary(z_regression)$coef)
+  print(results %>% select(Estimate, `Std. Error`, true_coefs, ub, lb, is_true_coef_in_estimate_range))
+  i <- i + 1
+}
+```
+
+```{r}
+ggplot(data=cop_data) +
+  geom_histogram(aes(x=q_Y, fill='Q(Y)'),alpha=0.5) +
+  geom_histogram(aes(x=q_Z1, fill='Q(Z1)'), alpha=0.5) +
+  geom_histogram(aes(x=q_Z2, fill='Q(Z2)'), alpha=0.5)
+```
