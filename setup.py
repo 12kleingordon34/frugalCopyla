@@ -7,8 +7,8 @@ setup(
     author='Dan Manela',
     author_email='tbc',
     install_requires=[
-        'jax==0.4.5',
-        'jaxlib==0.4.4',
+        'jax==0.4.7',
+        'jaxlib==0.4.6',
         'jupyter-server==1.23.0',
         'jupyter_client==7.4.4',
         'jupyter_core==4.11.2',
@@ -19,6 +19,9 @@ setup(
         'matplotlib-inline==0.1.6',
         'numpy==1.23.4',
         'numpyro==0.11.0',
+        'pandas==1.5.3',
+	'patsy==0.5.3',
+        'optax==0.1.4',
         'tensorflow_probability == 0.18.0'
     ],
     packages=find_packages(
