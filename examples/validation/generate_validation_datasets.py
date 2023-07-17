@@ -1,17 +1,18 @@
 import json
 
-from jax import    random
+from jax import random
 import jax
-import jax.numpy as    jnp
+import jax.numpy as jnp
 import jax.scipy.stats as jax_stats
 
 import numpyro
-import numpyro.distributions as    dist
-import numpy as    np
+import numpyro.distributions as dist
+import numpy as np
 import pandas as pd
 
-from frugalCopyla import copula_functions
-from frugalCopyla.model    import CopulaModel
+from frugalCopyla import copula_lpdfs
+from frugalCopyla import copula_hfunctions as hfunc
+from frugalCopyla.model import CopulaModel
 
 numpyro.set_host_device_count(4)
 
@@ -30,43 +31,47 @@ def model_b(beta, rho):
     rho_z1z2 = 0.
     rho_z1y = 0.5
     rho_z2y = 0.25
-    #print(jnp.sqrt(2*rho_zz_beta*rho_z1y*rho_z2y))
+
     Z1 = numpyro.sample('Z1', dist.Normal(0., 1.))
     Z2 = numpyro.sample('Z2', dist.Normal(beta * Z1, 1.))
-    #Z2 = numpyro.sample('Z2', dist.Normal(0., jnp.sqrt(1. + jnp.square(beta))))
-    Y = numpyro.sample('Y', dist.Normal(0., 1))
+    X = numpyro.sample('X', dist.Bernoulli(probs=jax.nn.sigmoid(Z1 + Z2)))
+    Y = numpyro.sample('Y', dist.Normal(X, 1.))
     q_Z1 = numpyro.deterministic('qZ1', dist.Normal(0., 1.).cdf(Z1))
-    #q_Z2 = numpyro.deterministic('qZ2', dist.Normal(0., jnp.sqrt(1. + jnp.square(beta))).cdf(Z2))
-    q_Z2 = numpyro.deterministic('qZ2', dist.Normal(beta * Z1,    1.).cdf(Z2))
-    #q_Y = numpyro.deterministic('qY', dist.Normal(X - 0.5, 1.).cdf(Y))
-    q_Y = numpyro.deterministic('qY', dist.Normal(0., 1).cdf(Y))
-    #q_A = numpyro.deterministic('qA', dist.Normal(0., jnp.sqrt(1 + 2*rho_zz_beta*rho_z1y*rho_z2y)).cdf(Y))
-    #q_A = numpyro.deterministic('qA', dist.Normal(0., jnp.sqrt(0.75)).cdf(Y))
+    q_Z2 = numpyro.deterministic('qZ2', dist.Normal(beta * Z1, 1.).cdf(Z2))
+    q_Y = numpyro.deterministic('qY', dist.Normal(X, 1.).cdf(Y))
     std_normal_Z1 = numpyro.deterministic('std_normal_z1', dist.Normal(0., 1.).icdf(q_Z1))
     std_normal_Z2 = numpyro.deterministic('std_normal_z2', dist.Normal(0., 1.).icdf(q_Z2))
     std_normal_Y = numpyro.deterministic('std_normal_y', dist.Normal(0., 1.).icdf(q_Y))
-    #q_Z1 = numpyro.sample('q_Z1', dist.Uniform(low=0, high=1))
-    #q_Z2 = numpyro.sample('q_Z2', dist.Uniform(low=0, high=1))
-    #q_Y = numpyro.sample('q_Y', dist.Uniform(low=0, high=1))
-    #std_normal_Z1 =    numpyro.deterministic('std_normal_z1', dist.Normal(0., 1.).icdf(q_Z1))
-    #std_normal_Z2 =    numpyro.deterministic('std_normal_z2', dist.Normal(0., 1.).icdf(q_Z2))
-    #std_normal_Y = numpyro.deterministic('std_normal_y', dist.Normal(0., 1.).icdf(q_Y))
-    #Z1 = numpyro.deterministic('Z1', dist.Normal(0., 1.).icdf(q_Z1))
-    #Z2 = numpyro.deterministic('Z2', dist.Normal(beta * Z1, 1).icdf(q_Z2))
-    #Y = numpyro.deterministic('Y', dist.Normal(0., 1.).icdf(q_Y))
 
 
     numpyro.factor(
-        'cop_log_prob_full',
-        copula_functions.multivar_gaussian_copula_lpdf(
-            {'z1': std_normal_Z1, 'z2': std_normal_Z2, 'z3': std_normal_Y},
-            {'rhoz1z2': rho_z1z2, 'rho_z1y': rho_z1y, 'rho_z2y': rho_z2y}
+        'YZ1',
+        copula_lpdfs.bivariate_gaussian_copula_lpdf(
+            {'Y': q_Y, 'Z_1': q_Z1},
+            {'_': 0.5}
         )
     )
+    numpyro.factor(
+        'YZ2|Z1',
+        copula_lpdfs.bivariate_gaussian_copula_lpdf(
+            {'Y|Z1': hfunc.bivariate_gaussian_copula_hfunction(
+                {'Y': q_Y, 'Z_1': q_Z1}, rho=0.5
+            ), 'Z_2|Z_1': q_Z2},
+            {'_': 0.5}
+        )
+    )
+#    numpyro.factor(
+#        'cop_log_prob_full',
+#        copula_lpdfs.multivar_gaussian_copula_lpdf(
+#            {'z1': std_normal_Z1, 'z2': std_normal_Z2, 'z3': std_normal_Y},
+#            {'rhoz1z2': rho_z1z2, 'rho_z1y': rho_z1y, 'rho_z2y': rho_z2y}
+#        )
+#    )
 
 
 def sample_model_b(model, beta, rho, num_warmup, num_samples, seed=None):
-    kernel = numpyro.infer.NUTS(model)
+    #kernel = numpyro.infer.NUTS(model)
+    kernel = numpyro.infer.DiscreteHMCGibbs(numpyro.infer.NUTS(model))
     mcmc_model = numpyro.infer.MCMC(
         kernel,
         num_warmup=num_warmup,
@@ -88,11 +93,26 @@ def main():
     rhos = [0.2, 0.4]# 0.6, 0.8]
     for rho in rhos:
         multivar_gaussian_cop = {
-            'Z': {'dist': dist.Normal, 'formula': {'loc': 'Z ~ 1', 'scale': 'Z ~ 1'}, 'coeffs': {'loc': [0.], 'scale': [1.]}, 'link': {}},
-            'X': {'dist': dist.Normal, 'formula': {'loc': 'X ~ Z', 'scale': 'X ~ 1'}, 'coeffs': {'loc': [0., rho], 'scale': [1. - jnp.square(rho)]}, 'link': {'scale': jnp.sqrt}},
-            'Y': {'dist': dist.Normal, 'formula': {'loc': 'Y ~ X', 'scale': 'Y ~ 1'}, 'coeffs': {'loc': [-0.5, rho], 'scale': [1.]}, 'link': {}},
+            'Z': {
+                'dist': dist.Normal,
+                'formula': {'loc': 'Z ~ 1', 'scale': 'Z ~ 1'},
+                'coeffs': {'loc': [0.], 'scale': [1.]},
+                'link': {}
+            },
+            'X': {
+                'dist': dist.Normal,
+                'formula': {'loc': 'X ~ Z', 'scale': 'X ~ 1'},
+                'coeffs': {'loc': [0., rho], 'scale': [1. - jnp.square(rho)]},
+                'link': {'scale': jnp.sqrt}
+            },
+            'Y': {
+                'dist': dist.Normal,
+                'formula': {'loc': 'Y ~ X', 'scale': 'Y ~ 1'},
+                'coeffs': {'loc': [-0.5, rho], 'scale': [1.]},
+                'link': {}
+            },
             'copula': {
-                'class': copula_functions.multivar_gaussian_copula_lpdf,
+                'class': copula_lpdfs.multivar_gaussian_copula_lpdf,
                 'vars': ['Z', 'Y'],
                 'formula': {'rho_ZY': 'cop ~ 1'},
                 'coeffs': {'rho_ZY': [0.5]},
@@ -106,7 +126,7 @@ def main():
             'X': {'dist': dist.Normal, 'formula': {'loc': 'X ~ Z1 + Z2', 'scale': 'X ~ 1'}, 'coeffs': {'loc': [0., rho, 0.], 'scale': [1.]}, 'link': {'scale': jnp.sqrt}},
             'Y': {'dist': dist.Normal, 'formula': {'loc': 'Y ~ X', 'scale': 'Y ~ 1'}, 'coeffs': {'loc': [-0.5, 1], 'scale': [1.]}, 'link': {}},
             'copula': {
-                'class': copula_functions.multivar_gaussian_copula_lpdf,
+                'class': copula_lpdfs.multivar_gaussian_copula_lpdf,
                 'vars':    ['Z1', 'Z2', 'Y'],
                 'formula': {'rho_Z1_Z2': 'cop ~ 1', 'rho_Z1_Y': 'cop ~ 1','rho_Z2_Y': 'cop ~ 1'},
                 #'coeffs': {'rho_Z1_Z2': [0.], 'rho_Z1_Y': [0.2],'rho_Z2_Y': [0.95]},
@@ -121,7 +141,7 @@ def main():
             #'Y': {'dist': dist.Normal, 'formula': {'loc': 'Y ~ X', 'scale':    'Y ~ 1'}, 'coeffs':    {'loc':    [-0.5, 1], 'scale':    [1.]}, 'link': {}},
             'Y': {'dist': dist.Normal, 'formula': {'loc': 'Y ~ 1', 'scale': 'Y ~ 1'}, 'coeffs': {'loc': [-0.], 'scale': [1.]}, 'link': {}},
             'copula': {
-                'class': copula_functions.multivar_gaussian_copula_lpdf,
+                'class': copula_lpdfs.multivar_gaussian_copula_lpdf,
                 'vars': ['Z1', 'Z2', 'Y'],
                 'formula': {'rho_Z1_Z2': 'cop ~ 1', 'rho_Z1_Y': 'cop ~ 1','rho_Z2_Y': 'cop ~ 1'},
                 'coeffs': {'rho_Z1_Z2': [0.0], 'rho_Z1_Y': [0.5],'rho_Z2_Y': [0.5]},
@@ -136,7 +156,7 @@ def main():
             #'Y': {'dist': dist.Normal, 'formula': {'loc': 'Y ~ X', 'scale':    'Y ~ 1'}, 'coeffs':    {'loc':    [-0.5, 1], 'scale':    [1.]}, 'link': {}},
             'Y': {'dist': dist.Normal, 'formula': {'loc': 'Y ~ 1', 'scale': 'Y ~ 1'}, 'coeffs': {'loc': [0.0], 'scale': [1.]}, 'link': {}},
             'copula': {
-                'class': copula_functions.multivar_studentt_copula_lpdf,
+                'class': copula_lpdfs.multivar_studentt_copula_lpdf,
                 'vars': ['Z1', 'Z2', 'Y'],
                 'formula': {'rho_Z1_Z2': 'cop ~ 1', 'rho_Z1_Y': 'cop ~ 1','rho_Z2_Y': 'cop ~ 1'},
                 'coeffs': {'rho_Z1_Z2': [0.0], 'rho_Z1_Y': [0.5],'rho_Z2_Y': [0.2]},
@@ -157,7 +177,7 @@ def main():
             'B': {'dist': dist.BernoulliProbs, 'formula': {'probs': 'B ~ A + L + A:L'}, 'coeffs': {'probs': [-0.3, 0.4, 0.3, 0.]}, 'link': {'probs': jax.nn.sigmoid}},
             'Y': {'dist': dist.Normal, 'formula': {'loc': 'Y ~ A + B + A:B', 'scale': 'Y ~ 1'}, 'coeffs': {'loc': [-0.5, 0.2, 0.3, 0.], 'scale': [1.]}, 'link': {}},
             'copula': {
-                'class': copula_functions.multivar_gaussian_copula_lpdf,
+                'class': copula_lpdfs.multivar_gaussian_copula_lpdf,
                 'vars': ['L', 'Y'],
                 'formula': {'rho_LY': 'cop ~ A'},
                 'coeffs': {'rho_LY': [1., 0.5]},
@@ -171,12 +191,12 @@ def main():
         num_samples = 100_000
         #multiconfounder_data_model_a = generate_cop_data(multiconfounder_gaussian_cop_model_a, num_samples,    'continuous')
         #multiconfounder_data_model_a.to_csv(f'./validation_datasets/multivar_gaussian/multiconfounder_gaussian_data_rho_{rho}_model_a.csv',    index=False)
-        multiconfounder_data_model_b = generate_cop_data(multiconfounder_gaussian_cop_model_b, num_samples, 'continuous')
-        multiconfounder_data_model_b.to_csv(f'./validation_datasets/multivar_gaussian/multiconfounder_gaussian_data_rho_{rho}_model_b.csv', index=False)
+        #multiconfounder_data_model_b = generate_cop_data(multiconfounder_gaussian_cop_model_b, num_samples, 'continuous')
+        #multiconfounder_data_model_b.to_csv(f'./validation_datasets/multivar_gaussian/multiconfounder_gaussian_data_rho_{rho}_model_b.csv', index=False)
         #studentt_multiconfounder_data_model_b = generate_cop_data(multiconfounder_studentt_cop_model_b, num_samples,    'continuous')
         #studentt_multiconfounder_data_model_b.to_csv(f'./validation_datasets/multivar_studentt/multiconfounder_studentt_data_rho_{rho}_model_b.csv',    index=False)
-        #multiconfounder_data_model_b = sample_model_b(model_b, beta=beta, rho=rho, num_warmup=5000, num_samples=num_samples)
-        #multiconfounder_data_model_b.to_csv(f'./validation_datasets/multivar_gaussian/multiconfounder_gaussian_data_rho_{rho}_model_b.csv',    index=False)
+        multiconfounder_data_model_b = sample_model_b(model_b, beta=beta, rho=rho, num_warmup=5000, num_samples=num_samples)
+        multiconfounder_data_model_b.to_csv(f'./validation_datasets/multivar_gaussian/multiconfounder_gaussian_data_rho_{rho}_model_b.csv',    index=False)
         #multiconfounder_data_model_broken =    sample_model_b(model_b, beta=1.5, rho=rho, num_warmup=5000, num_samples=num_samples)
         #multiconfounder_data_model_broken.to_csv(f'./validation_datasets/multivar_gaussian/multiconfounder_gaussian_data_rho_{rho}_model_broken.csv', index=False)
     # Generate Didelez Data

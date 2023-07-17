@@ -32,7 +32,7 @@ The input should be a dictionary whose keys label the variables in your model. F
 * `link` allows the user to provide an inverse link function for each of the linear formulas. For example, the command ```'X': {'dist': dist.Exponential, 'formula': {'rate': 'X ~ 1 + Z + A'}, 'params': {'rate': {'x_0': 0., 'x_1': 2., 'x_2': 1}}, 'link': {'rate': jnp.exp}},``` 
 will wrap the linear predictor in an exponential function such that the probabilistic model is $$X \sim \text{Exponential}(\lambda=\exp(2Z + A)).$$ **Note that the link function must have a `jax` base.** If no inverse link function is require, leave it as `None`.
     * Additionally, note that the order of the floats within `'params'` will automatically be the the order they are multiplied to the ordered variables in `'rate'`. **The intercept term will always be the first term in the parsed formula.**
-* `copula`: To specify a copula, first choose a `'class'` of copula from [frugalCopyla/copula_functions.py](../frugalCopyla/copula_functions.py). The copula functions will take in keyword arguments to calculate the log-likelihood of the copula factor. 
+* `copula`: To specify a copula, first choose a `'class'` of copula from [frugalCopyla/copula_lpdfs.py](../frugalCopyla/copula_lpdfs.py). The copula functions will take in keyword arguments to calculate the log-likelihood of the copula factor. 
     * Under `vars`, provide a mapping of the variables linked by the copula and the function arguments using a dictionary. For example, the `multivar_gaussian_copula_lpdf(vars, rhos)` factor takes two variables: a dictionary of random variables (`vars`) and a dictionary of the copula correlation matrix elements (`rhos`). If we wish to simulate a copula between `Z` and `Y`, provide `vars` the dictionary `..., 'vars': {'u': 'Z', 'v': 'Y'}`.
     * Under `'formula'`, specify the form of the linear predictor for the parameters passed to the copula. The coefficients for the linear predictor are specified under `'params'`.
     * Similarly to the other inputs, an inverse link function can be chosen to wrap the linear predictor specified in `'formula'` and `'params'`.
@@ -78,7 +78,7 @@ input_dict = {
     'X': {'dist': dist.Exponential, 'formula': {'rate': 'X ~ Z'}, 'coeffs': {'rate': [1., 1.]}, 'link': {'rate': jnp.exp}},
     'Y': {'dist': dist.Normal, 'formula': {'loc': 'Y ~ X', 'scale': 'Y ~ 1'}, 'coeffs': {'loc': [-0.5, 1.], 'scale': [1.]}, 'link': None},
     'copula': {
-        'class': frugalCopyla.copula_functions.multivar_gaussian_copula_lpdf,
+        'class': frugalCopyla.copula_lpdfs.multivar_gaussian_copula_lpdf,
         'vars': ['Z', 'Y'],
         'formula': {'rho': 'c ~ Z'},
         'coeffs': {'rho': [1., 0.]},
@@ -100,14 +100,14 @@ Note that the `joint_status` field requires you to specify whether you are sampl
 
 ### Copula types
 
-In principle, `frugalCopyla` can accomodate any copula framework. These can be found in [`copula_functions.py`](./frugalCopyla/copula_functions.py).
+In principle, `frugalCopyla` can accomodate any copula framework. These can be found in [`copula_lpdfs.py`](./frugalCopyla/copula_lpdfs.py).
 
 Multivariate Gaussian and Multivariate Student-T copulas are currently implemented. To parameterise the copula:
 
 ```
     ...
     'copula': {
-        'class': <copula-log-likelihood-function-found-in-copula_functions.py>,
+        'class': <copula-log-likelihood-function-found-in-copula_lpdfs.py>,
         'vars': <the-variables-correlated-via-the-copula>,
         'formula': <the-linear-formula-parameterising-the-copula-covariances>,
         'coeffs': <coefficients-for-each-formula>,
@@ -121,7 +121,7 @@ The `'misc'` field is not used for Gaussian copulas. However, the Degrees of Fre
 ```
     ..., 
 	'copula': {
-		'class': copula_functions.multivar_studentt_copula_lpdf,
+		'class': copula_lpdfs.multivar_studentt_copula_lpdf,
 		'vars':	['Z1', 'Z2', 'Y'],
 		'formula': {'rho_Z1_Z2': 'cop ~	1',	'rho_Z1_Y':	'cop ~ 1','rho_Z2_Y': 'cop ~ 1'},
 		'coeffs': {'rho_Z1_Z2':	[0.0], 'rho_Z1_Y': [0.5],'rho_Z2_Y': [0.2]},

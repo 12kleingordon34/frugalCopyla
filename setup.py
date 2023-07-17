@@ -26,6 +26,6 @@ setup(
     ],
     packages=find_packages(
         where='frugalCopyla',
-        include=['model', 'copula_functions']
+        include=['model', 'copula_lpdfs']
     )
 )

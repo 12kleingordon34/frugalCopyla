@@ -8,12 +8,12 @@ import pandas as pd
 import optax
 
 from frugalCopyla.model import CopulaModel
-from frugalCopyla import copula_functions
+from frugalCopyla import copula_lpdfs
 
 
 numpyro.set_host_device_count(4)
 
-def create_didelez_model(is_rct=False):
+def create_didelez_model(rho_ly, is_rct=False):
     if is_rct: 
         didelez_spec = {
             'A': {
@@ -41,11 +41,11 @@ def create_didelez_model(is_rct=False):
                 'link': {'loc': None, 'scale': None}
             },
             'copula': {
-                'class': copula_functions.multivar_gaussian_copula_lpdf,
+                'class': copula_lpdfs.multivar_gaussian_copula_lpdf,
                 'vars': ['L', 'Y'],
                 'formula': {'rho': 'cop ~ 1'},
-                'coeffs': {'rho': [1.]},
-                'link': {'rho': jax.nn.sigmoid}
+                'coeffs': {'rho': [rho_ly]},
+                'link': {'rho': None}
             }
         }
     else:
@@ -75,11 +75,11 @@ def create_didelez_model(is_rct=False):
                 'link': {'loc': None, 'scale': None}
             },
             'copula': {
-                'class': copula_functions.multivar_gaussian_copula_lpdf,
+                'class': copula_lpdfs.multivar_gaussian_copula_lpdf,
                 'vars': ['L', 'Y'],
                 'formula': {'rho': 'cop ~ 1'},
-                'coeffs': {'rho': [1.]},
-                'link': {'rho': jax.nn.sigmoid}
+                'coeffs': {'rho': [rho_ly]},
+                'link': {'rho': None}
             }
         }
     return CopulaModel(didelez_spec)
@@ -104,7 +104,7 @@ def sim_run(copula_model, inference_model, num_samples, svi_iter, lr, runs, prog
         for k in data_dict.keys():
             data_dict[k] = jnp.array(data_dict[k])
         
-        results = mle_inference(data_dict, inference_model, lr, svi_iter, run+1, progress_bar)
+        results = mle_inference(data_dict, inference_model, lr, svi_iter, seed+1, progress_bar)
         delta_pct = 100 * (results.losses[-1] - results.losses[-2]) / results.losses[-1]
         print(f"Run: {run} / {runs}. Loss Pct diff: {delta_pct} %.")
 
@@ -139,7 +139,7 @@ def gaussian_copula_lpdf(u, v, rho):
     v_2 = jnp.square(v)
     rho_2 = jnp.square(rho)
     return (
-        -0.5 * (1 - rho_2) - (
+        -0.5 * jnp.log(1 - rho_2) - (
             rho_2 * (u_2 + v_2) - 2 * rho * u * v
         ) / (2 * (1 - rho_2))
     )
@@ -240,7 +240,17 @@ def obs_didelez_model_inference(data):
 
     
     # Choosing an arbitrary sigmoidal function for rho_ly
-    rho_LY_val = numpyro.sample('rho_ly', dist.Beta(1, 1))
+    rho_LY_val = numpyro.sample('rho_ly',
+        numpyro.distributions.ImproperUniform(
+            numpyro.distributions.constraints.interval(-1., 1.),
+            batch_shape=(), 
+            event_shape=()
+        )
+    )
+    corr_param = jnp.array([
+        [1., rho_LY_val],
+        [rho_LY_val, 1.]
+    ])
     
     # `numpyro.factor()` appears to add a log-likelihood to the sampling space
     # If you want to add the renormalising factors, we can simply add or subtract
@@ -248,7 +258,23 @@ def obs_didelez_model_inference(data):
     std_normal_L = dist.Normal(0, 1).icdf(quantiles_L)
     std_normal_Y = dist.Normal(0, 1).icdf(quantiles_Y)
 
-    cop_log_prob = numpyro.factor('cop_log_prob', gaussian_copula_lpdf(std_normal_L, std_normal_Y, rho_LY_val))
+
+    #jit_corr_mvg_copula = jax.jit(copula_lpdfs.corr_multivar_gaussian_copula_lpdf)
+    #cop_log_prob = numpyro.factor(
+    #    'cop_log_prob',
+    #    jit_corr_mvg_copula(
+    #        jnp.array([std_normal_L, std_normal_Y]).T,
+    #        corr_param
+    #    )
+    #)
+    cop_log_prob = numpyro.factor(
+        'cop_log_prob',
+        gaussian_copula_lpdf(
+            std_normal_L,
+            std_normal_Y,
+            rho_LY_val
+        )
+    )
 
 
 def rct_didelez_model_inference(data): 
@@ -321,9 +347,14 @@ def rct_didelez_model_inference(data):
     Y = numpyro.sample("y", dist.Normal(Y_mean, 1.), obs=data['y_obs'])
     quantiles_Y = dist.Normal(Y_mean, 1.).cdf(Y)
 
-    
     # Choosing an arbitrary sigmoidal function for rho_ly
-    rho_LY_val = numpyro.sample('rho_ly', dist.Beta(1, 1))
+    rho_LY_val = numpyro.sample('rho_ly',
+        numpyro.distributions.ImproperUniform(
+            numpyro.distributions.constraints.interval(-1., 1.),
+            batch_shape=(), 
+            event_shape=()
+        )
+    )
     
     # `numpyro.factor()` appears to add a log-likelihood to the sampling space
     # If you want to add the renormalising factors, we can simply add or subtract
@@ -331,4 +362,9 @@ def rct_didelez_model_inference(data):
     std_normal_L = dist.Normal(0, 1).icdf(quantiles_L)
     std_normal_Y = dist.Normal(0, 1).icdf(quantiles_Y)
 
-    cop_log_prob = numpyro.factor('cop_log_prob', gaussian_copula_lpdf(std_normal_L, std_normal_Y, rho_LY_val))
+    # cop_log_prob = numpyro.factor('cop_log_prob', gaussian_copula_lpdf(std_normal_L, std_normal_Y, rho_LY_val))
+    cop_log_prob = numpyro.factor(
+        'cop_log_prob',
+        #multivar_gaussian_copula_lpdf(std_normal_L, std_normal_Y, rho_LY_val)
+        gaussian_copula_lpdf(std_normal_L, std_normal_Y, rho_LY_val)
+    )

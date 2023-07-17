@@ -1,7 +1,7 @@
 import jax.numpy as jnp
 import pytest
 
-import frugalCopyla.copula_functions as cops
+import frugalCopyla.copula_lpdfs as cops
 
 
 def test_binary_non_chol_reshape_matrix():

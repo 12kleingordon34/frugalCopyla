@@ -10,7 +10,7 @@ import numpyro
 from numpyro.distributions import *
 import patsy
 
-from frugalCopyla.copula_functions import _reshape_matrix
+from frugalCopyla.copula_lpdfs import _reshape_matrix
 
 ##### PERHAPS CHECK WHETHER A LINK FUNCTION IS NECESSARY FOR EACH PARAMETER
 ###### PERHAPS CHECK WHETHER A LINK FUNCTION IS NECESSARY FOR EACH PARAMETER
