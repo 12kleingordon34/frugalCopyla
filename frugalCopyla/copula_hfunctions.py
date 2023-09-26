@@ -3,7 +3,7 @@ import numpyro.distributions as dist
 
 
 def bivariate_gaussian_copula_hfunction(vars: dict, rho: float) -> float:
-    assert (rho >= -1.) and (rho <= 1.)
+    #assert (rho >= -1.) and (rho <= 1.)
 
     std_gaussian_dist = dist.Normal(0, 1)
     u, v = vars.values()
