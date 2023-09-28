@@ -19,7 +19,7 @@ setup(
         'matplotlib-inline==0.1.6',
         'numpy==1.24.1',
         #'numpyro==0.13.2',
-	    'patsy==0.5.3',
+   	    'patsy==0.5.3',
         'optax==0.1.4',
         'tensorflow_probability == 0.18.0'
     ],

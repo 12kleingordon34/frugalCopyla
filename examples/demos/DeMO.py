@@ -3,13 +3,13 @@ import jax.numpy as jnp
 import numpyro
 numpyro.set_host_device_count(4)
 import numpyro.distributions as dist
-import numpy as np
 import pandas as pd
 from scipy.special import expit
 
 from frugalCopyla import copula_lpdfs
 from frugalCopyla.model	import CopulaModel
 from frugalCopyla.diagnostics import *
+
 
 def generate_copyla_model():
     return {
@@ -31,7 +31,6 @@ def generate_copyla_model():
                 'rho_Z2Y': [2*expit(0.3) - 1],
             },
             'link': {}
-            # 'misc': {}
         }
     }
 
