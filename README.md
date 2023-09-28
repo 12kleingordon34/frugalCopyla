@@ -5,6 +5,7 @@ Clear and efficient sampling from customisable frugal causal models.
 ## Setup
 Clone the repo and run
 ```
+pip install git+https://github.com/12kleingordon34/numpyro.git@master#egg=numpyro
 pip install -e .
 pip install -r requirements.txt
 ```
