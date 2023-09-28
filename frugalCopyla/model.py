@@ -46,7 +46,7 @@ class CopulaModel:
             parsed_model[var] = {'dist': model_dict[var]['dist'], 'formula': {}, 'coeffs': [], 'link': {}}
 
             # Currently use numpyro.distributions in input, but can change
-            assert self._is_dist_from_numpyro(model_dict[var]['dist'])
+            #assert self._is_dist_from_numpyro(model_dict[var]['dist'])
             distribution_params = parsed_model[var]['dist'].arg_constraints.keys()
             
             if model_dict[var].get('link', None):
@@ -92,8 +92,9 @@ class CopulaModel:
                 copula_settings['formula'][param],
                 copula_settings['coeffs'][param]
             )
-            assert self._is_link_from_jax(copula_settings['link'][param])
-            parsed_model['copula']['link'][param] = copula_settings['link'][param]
+            if copula_settings['link'].get(param):
+                assert self._is_link_from_jax(copula_settings['link'][param])
+                parsed_model['copula']['link'][param] = copula_settings['link'][param]
         misc_params = copula_settings.get('misc', None)
         if misc_params:
             parsed_model['copula']['misc'] = misc_params
@@ -159,28 +160,26 @@ class CopulaModel:
                     lin_models_evaluated[k] = test_row['link'][k](eval(v))
                 else:
                     lin_models_evaluated[k] = eval(v)
+            
+            record_dict[f"q_{test_idx}"] = numpyro.sample(
+                f"q_{test_idx}",
+                numpyro.distributions.Uniform(low=0., high=1.)
+            )
             #### ITS NOT DOING ANYTHING WITH THE SCALE PARAMETER --- NEED TO FIX
             if test_row['link']:
-                record_dict[test_idx] = numpyro.sample(
+                record_dict[test_idx] = numpyro.deterministic(
                     test_idx,
-                    test_row['dist'](**lin_models_evaluated)
+                    prob_model[test_idx]['dist'](**lin_models_evaluated).icdf(record_dict[f"q_{test_idx}"])
                 )
             else:
-                record_dict[test_idx] = numpyro.sample(
+                record_dict[test_idx] = numpyro.deterministic(
                     test_idx,
-                    test_row['dist'](**lin_models_evaluated)
+                    prob_model[test_idx]['dist'](**lin_models_evaluated).icdf(record_dict[f"q_{test_idx}"])
                 )
         
-             # Generate quantiles
-            if copula_params and test_idx in copula_params['vars']:
-                record_dict[f"q_{test_idx}"] = numpyro.deterministic(
-                    f"q_{test_idx}",
-                    prob_model[test_idx]['dist'](**lin_models_evaluated).cdf(record_dict[test_idx])
-                )
-
         if copula_params:
             for idx, formula in copula_params['corr_linear_predictor'].items():
-                if copula_params['link'][idx]:
+                if copula_params['link'].get(idx):
                     record_dict[idx] = numpyro.deterministic(
                         idx,
                         ###### PERHAPS CHECK WHETHER A LINK FUNCTION IS NECESSARY FOR EACH PARAMETER
