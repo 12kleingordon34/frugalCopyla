@@ -44,7 +44,7 @@ def generate_dynamic_discrete_model():
         'U': {'dist': dist.Uniform, 'formula': {'low': 'U ~ 1', 'high': 'U ~ 1'}, 'coeffs': {'low': [0.], 'high': [1.]}, 'link': {}},
         'L': {'dist': dist.Exponential, 'formula': {'rate': 'L ~ A'}, 'coeffs': {'rate': [-0.3, 0.2]}, 'link': {'rate': jnp.exp}},
         'B': {'dist': dist.BernoulliProbs, 'formula': {'probs': 'B ~ L + A'}, 'coeffs': {'probs': [-0.3, 0.4, 0.3]}, 'link': {'probs': jax.scipy.special.expit}},
-        'Y': {'dist': dist.BernoulliProbs, 'formula': {'probs': 'Y ~ A + B'}, 'coeffs': {'probs': [0.5, -0.2, -0.3]}, 'link': {'probs': jax.scipy.special.expit}},
+        'Y': {'dist': dist.BernoulliProbs, 'formula': {'probs': 'Y ~ A + B'}, 'coeffs': {'probs': [-0.5, 0.2, 0.3]}, 'link': {'probs': jax.scipy.special.expit}},
         'copula': {
             'class': copula_lpdfs.multivar_gaussian_copula_lpdf,
             'vars': ['L', 'U', 'Y'],
