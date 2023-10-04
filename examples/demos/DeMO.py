@@ -37,7 +37,6 @@ def generate_dynamic_continuous_model():
         }
     }
 
-
 def generate_dynamic_discrete_model():
     return {
         'A': {'dist': dist.BernoulliProbs, 'formula': {'probs': 'A ~ 1'}, 'coeffs': {'probs': [0.5]}, 'link': {}},
