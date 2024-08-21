@@ -20,7 +20,7 @@ library(VineCopula)
 #'                   familyMatrix = c(1, 3, 0, 1), 
 #'                   parameterMatrix = c(0.5, 0.8, 0), 
 #'                   sampleSize = 100)
-simulateRVineData <- function(structureMatrix, familyMatrix, parameterMatrix, sampleSize = 300) {
+simulateRVineData <- function(structureMatrix, familyMatrix, parameterMatrix, sampleSize = 300, seed=123) {
   # Ensure matrices are in the correct format
   # structureMatrix <- matrix(structureMatrix, ncol = sqrt(length(structureMatrix)))
   # familyMatrix <- matrix(familyMatrix, ncol = sqrt(length(familyMatrix)))
@@ -33,7 +33,7 @@ simulateRVineData <- function(structureMatrix, familyMatrix, parameterMatrix, sa
   RVM <- RVineMatrix(Matrix = structureMatrix, family = familyMatrix, par = parameterMatrix, names = varNames)
   
   # Set seed for reproducibility (optional)
-  set.seed(123)
+  set.seed(seed)
   
   # Simulate data from the defined R-vine model
   simdata <- RVineSim(sampleSize, RVM)
@@ -380,12 +380,12 @@ updateVineMatrices <- function(structureMatrix, familyMatrix, parameterMatrix, p
 #' results <- simulateAndReparameterizeVine(structureMatrix, familyMatrix, parameterMatrix, sampleSize, topoOrder, vineCorParams)
 #' 
 #' @export
-simulateAndReparameterizeVine <- function(structureMatrix, familyMatrix, parameterMatrix, sampleSize, topoOrder, vineCorParams) {
+simulateAndReparameterizeVine <- function(structureMatrix, familyMatrix, parameterMatrix, sampleSize, topoOrder, vineCorParams, seed=1) {
   library(copula)
   library(VineCopula)
   
   # Initial vine copula simulation
-  oldVineOutput <- simulateRVineData(structureMatrix, familyMatrix, parameterMatrix, sampleSize)
+  oldVineOutput <- simulateRVineData(structureMatrix, familyMatrix, parameterMatrix, sampleSize, seed)
   
   # Fit a multivariate Gaussian copula to the simulated data
   mvgFit <- fitMVGaussianCopula(oldVineOutput$simdata, method = 'itau')
@@ -403,13 +403,19 @@ simulateAndReparameterizeVine <- function(structureMatrix, familyMatrix, paramet
     updatedVine$StructureMatrix, 
     updatedVine$FamilyMatrix, 
     updatedVine$ParameterMatrix,
-    sampleSize
+    sampleSize,
+    seed=seed
   )
   
   # Compute the standardized precision matrix for the new simulated data
   standardized_precision_matrix_np <- compute_standardized_precision_matrix(newVineOutput$simdata)
   
-  return(list(oldVineOutput = oldVineOutput, newVineOutput = newVineOutput, standardized_precision_matrix_np = standardized_precision_matrix_np))
+  return(list(
+    oldVineOutput = oldVineOutput, 
+    newVineOutput = newVineOutput, 
+    standardized_precision_matrix_np = standardized_precision_matrix_np, 
+    fullCorMatrixMN=fullCorMatrixMN
+  ))
 }
 
 simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder, normal_corr_values, general_dep, general_family, seed=1) {
@@ -472,3 +478,46 @@ simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder
   do.call(grid.arrange, c(plot_list, ncol = 2))
 }
 
+
+multivariate_conditional_mean_and_samples <- function(X2_samples, R) {
+  # Determine the dimensions
+  k <- ncol(X2_samples)       # Number of variables being conditioned on (X2)
+  n_samples <- nrow(X2_samples)
+  d <- nrow(R)                # Total number of variables
+  
+  # Indices for partitioning the covariance matrix
+  indices_1 <- d              # First variable (X1)
+  indices_2 <- 1:(d-1)            # Remaining variables (X2)
+  
+  # Extract the relevant components from the covariance matrix R
+  R11 <- R[indices_1, indices_1]         # Variance of X1
+  R12 <- matrix(R[indices_1, indices_2], nrow=1)         # Covariance between X1 and X2
+  R22 <- R[indices_2, indices_2]         # Covariance matrix of X2
+  
+  # Compute the inverse of R22
+  R22_inv <- solve(R22)
+  
+  # Ensure all variables are numeric matrices
+  X2_samples <- as.matrix(X2_samples)
+  R12 <- as.matrix(R12)
+  R22_inv <- as.matrix(R22_inv)
+  
+  # Calculate the conditional variance
+  conditional_variance <- R11 - R12 %*% R22_inv %*% t(R12)
+  
+  # Calculate the conditional mean for each sample
+  conditional_means <- X2_samples %*% t(R12 %*% R22_inv)
+  
+  # Generate samples from a Gaussian distribution with the computed conditional mean and variance
+  generated_samples <- matrix(NA, nrow = n_samples, ncol = 1)
+  for (i in 1:nrow(X2_samples)) {
+    generated_samples[i] <- rnorm(1, mean = conditional_means[i], sd = sqrt(conditional_variance))
+  }
+  
+  # Return the conditional means, conditional variance, and generated samples
+  return(list(
+    generated_samples = generated_samples,
+    conditional_means = conditional_means,
+    conditional_variance = conditional_variance
+  ))
+}
