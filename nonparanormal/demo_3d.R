@@ -33,7 +33,16 @@ parameterMatrix <- matrix(
 
 
 normal_corr_values <- seq(0.38, 0.98, by = 0.2)
-# simulateAndPlot(structureMatrix, familyMatrix, sampleSize, 1:6, normal_corr_values, general_dep=-5, general_family=23, seed=1)
+simulateAndPlot(
+  structureMatrix, 
+  familyMatrix,
+  sampleSize=10000, 
+  1:D, 
+  normal_corr_values, 
+  general_dep=clayton_dep, 
+  general_family=5, 
+  seed=NULL
+)
 
 # Sample from Vine
 vineOutput <- simulateRVineData(structureMatrix, familyMatrix, parameterMatrix, sampleSize)

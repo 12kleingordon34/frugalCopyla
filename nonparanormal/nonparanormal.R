@@ -33,7 +33,9 @@ simulateRVineData <- function(structureMatrix, familyMatrix, parameterMatrix, sa
   RVM <- RVineMatrix(Matrix = structureMatrix, family = familyMatrix, par = parameterMatrix, names = varNames)
   
   # Set seed for reproducibility (optional)
-  set.seed(seed)
+  if (!is.null(seed)) {
+    set.seed(seed)
+  }
   
   # Simulate data from the defined R-vine model
   simdata <- RVineSim(sampleSize, RVM)
@@ -380,7 +382,7 @@ updateVineMatrices <- function(structureMatrix, familyMatrix, parameterMatrix, p
 #' results <- simulateAndReparameterizeVine(structureMatrix, familyMatrix, parameterMatrix, sampleSize, topoOrder, vineCorParams)
 #' 
 #' @export
-simulateAndReparameterizeVine <- function(structureMatrix, familyMatrix, parameterMatrix, sampleSize, topoOrder, vineCorParams, seed=1) {
+simulateAndReparameterizeVine <- function(structureMatrix, familyMatrix, parameterMatrix, sampleSize, topoOrder, vineCorParams, seed=NULL) {
   library(copula)
   library(VineCopula)
   
@@ -418,16 +420,59 @@ simulateAndReparameterizeVine <- function(structureMatrix, familyMatrix, paramet
   ))
 }
 
-simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder, normal_corr_values, general_dep, general_family, seed=1) {
+
+simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder, normal_corr_values, general_dep, general_family, seed=NULL) {
+  #' Simulate and plot the results for given structure and family matrices.
+  #'
+  #' This function simulates data based on provided structure and family matrices,
+  #' iterates over a set of normal correlation values, and computes p-values for
+  #' both nonparanormal and normal models using Kendall's tau and KCI tests.
+  #' The function generates plots for each normal correlation value and returns
+  #' a table containing the computed p-values.
+  #'
+  #' @param structureMatrix Matrix indicating the structure of the model.
+  #' @param familyMatrix Matrix indicating the family relationships in the model.
+  #' @param sampleSize Integer representing the sample size for the simulation.
+  #' @param topoOrder Vector indicating the topological order of nodes.
+  #' @param normal_corr_values Numeric vector of normal correlation values to iterate over.
+  #' @param general_dep General dependency parameter for the copula.
+  #' @param general_family Integer indicating the family of copulas to be used.
+  #' @param seed Integer or NULL, specifying the seed for random number generation. If NULL, no seed is set.
+  #' 
+  #' @return A data frame containing p-values for Kendall's tau and KCI tests for both
+  #'         the nonparanormal and normal models, along with a grid of generated plots.
+  #' @examples
+  #' pval_table <- simulateAndPlot(structureMatrix, familyMatrix, sampleSize, topoOrder, c(0.1, 0.2, 0.3), 0.5, 1, seed=42)
+  
+  cat("Initializing the simulation process...\n")
+  
   plot_list <- list() # Initialize an empty list to store ggplot objects
-  D <- dim(structureMatrix)[1]
-  set.seed(seed)
+  D <- dim(structureMatrix)
+  
+  if (!is.null(seed)) {
+    cat("Setting seed for reproducibility: ", seed, "\n")
+    set.seed(seed)
+  } else {
+    cat("No seed is set, results will be non-reproducible.\n")
+  }
+  
+  # Initialize an empty data frame to store p-values
+  pval_table <- data.frame(
+    normal_corr = numeric(),
+    kendall_np_pval = numeric(),
+    kci_np_pval = numeric(),
+    kendall_pval = numeric(),
+    kci_pval = numeric()
+  )
+  
   for (normal_corr in normal_corr_values) {
+    cat("Processing normal_corr value: ", normal_corr, "\n")
+    
     # Update the normal correlation parameter in the parameter matrix
-    parameterMatrix[D, (D-1)] <- normal_corr
+    parameterMatrix[D, (D[2]-1)] <- normal_corr
     vineCorParams <- normal_corr
     
-    # Run simulation and reparameterization
+    cat("Simulating and reparameterizing vine structure...\n")
     npReparamVine <- simulateAndReparameterizeVine(
       structureMatrix, 
       familyMatrix, 
@@ -438,7 +483,7 @@ simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder
     )
     
     oldVineOutput <- npReparamVine$oldVineOutput
-    # newVineOutput <- npReparamVine$newVineOutput
+    
     ###########################
     ############ HACKY SOLUTION
     ###########################
@@ -447,7 +492,7 @@ simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder
     # Final variable is the outcome
     newSimData <- newVineOutput$simdata
     covariate_ranks <- newSimData[, 1:(dim(newSimData)[2] - 1)]
-    outcome_model <-multivariate_conditional_mean_and_samples(
+    outcome_model <- multivariate_conditional_mean_and_samples(
       X2_samples = qnorm(covariate_ranks), 
       R = npReparamVine$fullCorMatrixMN
     )
@@ -463,25 +508,37 @@ simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder
     margins_np <- newVineOutput$simdata
     
     # Calculate H-functions for both old and new vine outputs
+    cat("Calculating H-functions and p-values for nonparanormal model...\n")
     F2_3_np <- BiCopHfunc(margins_np[,2], margins_np[,3], family=general_family, par=general_dep)$hfunc2
     F4_3_np <- BiCopHfunc(margins_np[,4], margins_np[,3], family=1, par=normal_corr)$hfunc2
     kendall_np_pval <- cor.test(F4_3_np, F2_3_np, method=c("kendall"))$p.value
     kci_result_np <- KCI(qnorm(margins_np[,2]), qnorm(margins_np[,4]), qnorm(margins_np[,3]))
     kci_np_pval <- kci_result_np$pvalue
     
+    cat("Calculating H-functions and p-values for regular model...\n")
     F2_3 <- BiCopHfunc(margins[,2], margins[,3], family=general_family, par=general_dep)$hfunc2
     F4_3 <- BiCopHfunc(margins[,4], margins[,3], family=1, par=normal_corr)$hfunc2
     kendall_pval <- cor.test(F4_3, F2_3, method=c("kendall"))$p.value
     kci_result <- KCI(qnorm(margins[,2]), qnorm(margins[,4]), qnorm(margins[,3]))
     kci_pval <- kci_result$pvalue
-
+    
+    # Add p-values to the data frame
+    cat("Recording p-values in the table...\n")
+    pval_table <- rbind(pval_table, data.frame(
+      normal_corr = normal_corr,
+      kendall_np_pval = kendall_np_pval,
+      kci_np_pval = kci_np_pval,
+      kendall_pval = kendall_pval,
+      kci_pval = kci_pval
+    ))
+    
     # Generate plots
+    cat("Generating plots for normal_corr = ", normal_corr, "\n")
     p1 <- ggplot(data.frame(F2_3 = F2_3_np, F4_3 = F4_3_np), aes(x = F2_3, y = F4_3)) +
       stat_density_2d(aes(fill = ..level..), geom = "polygon") +  # Use stat_density_2d for filled contours
       scale_fill_viridis_c() +  # Adds a color gradient based on density levels
       labs(x = "F2_3", y = "F4_3", title = paste("NP Contour Plot of F2_3 vs F4_3 (corr =", normal_corr, ")")) +
       theme_minimal()
-    
     
     p2 <- ggplot(data.frame(F2_3 = F2_3, F4_3 = F4_3), aes(x = F2_3, y = F4_3)) +
       stat_density_2d(aes(fill = ..level..), geom = "polygon") +  # Use stat_density_2d for filled contours
@@ -495,8 +552,15 @@ simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder
   }
   
   # Combine all plots into a grid
+  cat("Combining plots into a grid...\n")
   do.call(grid.arrange, c(plot_list, ncol = 2))
+  
+  cat("Simulation and plotting process completed. Returning p-value table.\n")
+  
+  # Return the p-value table as well
+  return(pval_table)
 }
+
 
 
 multivariate_conditional_mean_and_samples <- function(X2_samples, R) {
