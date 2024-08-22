@@ -420,16 +420,11 @@ simulateAndReparameterizeVine <- function(structureMatrix, familyMatrix, paramet
 
 simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder, normal_corr_values, general_dep, general_family, seed=1) {
   plot_list <- list() # Initialize an empty list to store ggplot objects
+  D <- dim(structureMatrix)[1]
   set.seed(seed)
   for (normal_corr in normal_corr_values) {
     # Update the normal correlation parameter in the parameter matrix
-    parameterMatrix <- matrix(
-      c(0, 0, 0, 0, 0, general_dep, 
-        0, 0, 0, 0, 0, general_dep,
-        0, 0, 0, 0, 0, general_dep,
-        0, 0, 0, 0, 0, general_dep,
-        0, 0, 0, 0, 0, normal_corr,
-        0, 0, 0, 0, 0, 0), ncol=D)
+    parameterMatrix[D, (D-1)] <- normal_corr
     vineCorParams <- normal_corr
     
     # Run simulation and reparameterization
@@ -443,30 +438,55 @@ simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder
     )
     
     oldVineOutput <- npReparamVine$oldVineOutput
+    # newVineOutput <- npReparamVine$newVineOutput
+    ###########################
+    ############ HACKY SOLUTION
+    ###########################
     newVineOutput <- npReparamVine$newVineOutput
+    
+    # Final variable is the outcome
+    newSimData <- newVineOutput$simdata
+    covariate_ranks <- newSimData[, 1:(dim(newSimData)[2] - 1)]
+    outcome_model <-multivariate_conditional_mean_and_samples(
+      X2_samples = qnorm(covariate_ranks), 
+      R = npReparamVine$fullCorMatrixMN
+    )
+    outcome_quantile_samples <- pnorm(outcome_model$generated_samples)
+    newSimData[, dim(newSimData)[2]] <- outcome_quantile_samples
+    npReparamVine$newVineOutput$simdata <- newSimData
+    newVineOutput$simdata <- newSimData
+    ###########################
+    ###########################
+    ###########################
     
     margins <- oldVineOutput$simdata
     margins_np <- newVineOutput$simdata
     
     # Calculate H-functions for both old and new vine outputs
-    F4_5_np <- BiCopHfunc(margins_np[,4], margins_np[,5], family=general_family, par=general_dep)$hfunc2
-    F6_5_np <- BiCopHfunc(margins_np[,6], margins_np[,5], family=1, par=normal_corr)$hfunc2
+    F2_3_np <- BiCopHfunc(margins_np[,2], margins_np[,3], family=general_family, par=general_dep)$hfunc2
+    F4_3_np <- BiCopHfunc(margins_np[,4], margins_np[,3], family=1, par=normal_corr)$hfunc2
+    kendall_np_pval <- cor.test(F4_3_np, F2_3_np, method=c("kendall"))$p.value
+    kci_result_np <- KCI(qnorm(margins_np[,2]), qnorm(margins_np[,4]), qnorm(margins_np[,3]))
+    kci_np_pval <- kci_result_np$pvalue
     
-    F4_5 <- BiCopHfunc(margins[,4], margins[,5], family=general_family, par=general_dep)$hfunc2
-    F6_5 <- BiCopHfunc(margins[,6], margins[,5], family=1, par=normal_corr)$hfunc2
-    
+    F2_3 <- BiCopHfunc(margins[,2], margins[,3], family=general_family, par=general_dep)$hfunc2
+    F4_3 <- BiCopHfunc(margins[,4], margins[,3], family=1, par=normal_corr)$hfunc2
+    kendall_pval <- cor.test(F4_3, F2_3, method=c("kendall"))$p.value
+    kci_result <- KCI(qnorm(margins[,2]), qnorm(margins[,4]), qnorm(margins[,3]))
+    kci_pval <- kci_result$pvalue
+
     # Generate plots
-    p1 <- ggplot(data.frame(F4_5 = F4_5_np, F6_5 = F6_5_np), aes(x = F4_5, y = F6_5)) +
+    p1 <- ggplot(data.frame(F2_3 = F2_3_np, F4_3 = F4_3_np), aes(x = F2_3, y = F4_3)) +
       stat_density_2d(aes(fill = ..level..), geom = "polygon") +  # Use stat_density_2d for filled contours
       scale_fill_viridis_c() +  # Adds a color gradient based on density levels
-      labs(x = "F4_5", y = "F6_5", title = paste("NP Contour Plot of F4_5 vs F6_5 (corr =", normal_corr, ")")) +
+      labs(x = "F2_3", y = "F4_3", title = paste("NP Contour Plot of F2_3 vs F4_3 (corr =", normal_corr, ")")) +
       theme_minimal()
     
     
-    p2 <- ggplot(data.frame(F4_5 = F4_5, F6_5 = F6_5), aes(x = F4_5, y = F6_5)) +
+    p2 <- ggplot(data.frame(F2_3 = F2_3, F4_3 = F4_3), aes(x = F2_3, y = F4_3)) +
       stat_density_2d(aes(fill = ..level..), geom = "polygon") +  # Use stat_density_2d for filled contours
       scale_fill_viridis_c() +  # Adds a color gradient based on density levels
-      labs(x = "F4_5", y = "F6_5", title = paste("True Contour Plot of F4_5 vs F6_5 (corr =", normal_corr, ")")) +
+      labs(x = "F2_3", y = "F4_3", title = paste("True Contour Plot of F2_3 vs F4_3 (corr =", normal_corr, ")")) +
       theme_minimal()
     
     # Add plots to the list
