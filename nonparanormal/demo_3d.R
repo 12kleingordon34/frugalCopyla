@@ -24,7 +24,7 @@ familyMatrix <- matrix(
     0, 0, 0, 0), ncol=D)
 
 clayton_dep <- +5
-normal_corr <- 0.8
+normal_corr <- 0.99
 parameterMatrix <- matrix(
                    c(0, 0, 0, clayton_dep,
                      0, 0, 0, clayton_dep,
@@ -142,23 +142,27 @@ kci_result_np <- KCI(X_np, Y_np, Z_np)
 print(kci_result_np)
 
 
-F4_3 <- BiCopHfunc(margins[,4], margins[,3], family=4, par=clayton_dep)$hfunc2
-F2_3 <- BiCopHfunc(margins[,2], margins[,3], family=1, par=normal_corr)$hfunc2
+F4_3 <- BiCopHfunc(margins[,4], margins[,3], family=1, par=normal_corr)$hfunc2
+F2_3 <- BiCopHfunc(margins[,2], margins[,3], family=4, par=clayton_dep)$hfunc2
 cor.test(F4_3, F2_3, method=c("kendall"))
 
 
 p1 <- ggplot(data.frame(F4_5 = qnorm(F4_5_np), F6_5 = qnorm(F6_5_np)), aes(x = F4_5, y = F6_5)) +
   geom_density2d_filled(alpha=0.6) +
   labs(x = "F4_5", y = "F6_5", title = "NP Contour Plot of F4_5 vs F6_5") +
-  theme_minimal()
+  theme_minimal() + 
+  xlim(-3, 3) +
+  ylim(-3, 3)
 
 # Plot for the true distribution
-F4_5 <- BiCopHfunc(margins[,4], margins[,5], family=23, par=clayton_dep)$hfunc2
-F6_5 <- BiCopHfunc(margins[,6], margins[,5], family=1, par=normal_corr)$hfunc2
-p2 <- ggplot(data.frame(F4_5 = qnorm(F4_5), F6_5 = qnorm(F6_5)), aes(x = F4_5, y = F6_5)) +
+F4_3 <- BiCopHfunc(margins[,4], margins[,3], family=1, par=normal_corr)$hfunc2
+F2_3 <- BiCopHfunc(margins[,2], margins[,3], family=4, par=clayton_dep)$hfunc2
+p2 <- ggplot(data.frame(F4_3 = qnorm(F4_3), F2_3 = qnorm(F2_3)), aes(x = F4_3, y = F2_3)) +
   geom_density2d_filled(alpha=0.6) +
-  labs(x = "F4_5", y = "F6_5", title = "True Contour Plot of F4_5 vs F6_5") +
-  theme_minimal()
+  labs(x = "F4_3", y = "F2_3", title = "True Contour Plot of F4_3 vs F2_3") +
+  theme_minimal() + 
+  xlim(-3, 3) +
+  ylim(-3, 3)
 
 # Combine the plots side by side
 grid.arrange(p1, p2, ncol = 2)
