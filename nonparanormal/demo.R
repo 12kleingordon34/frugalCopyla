@@ -7,7 +7,7 @@ library(VineCopula)
 
 source('nonparanormal.R')
 
-sampleSize <- 3000
+sampleSize <- 5000
 D <- 6
 
 # Making Clayton model
@@ -19,15 +19,15 @@ structureMatrix <- matrix(
                      0, 0, 0, 0, 5, 6,
                      0, 0, 0, 0, 0, 6), ncol=D)
 familyMatrix <- matrix(
-                c(0, 0, 0, 0, 0, 23, 
-                  0, 0, 0, 0, 0, 23,
-                  0, 0, 0, 0, 0, 23,
-                  0, 0, 0, 0, 0, 23,
+                c(0, 0, 0, 0, 0, 3, 
+                  0, 0, 0, 0, 0, 3,
+                  0, 0, 0, 0, 0, 3,
+                  0, 0, 0, 0, 0, 3,
                   0, 0, 0, 0, 0, 1,
                   0, 0, 0, 0, 0, 0), ncol=D)
 
-clayton_dep <- -5
-normal_corr <- 0.99
+clayton_dep <- 3
+normal_corr <- 0.8
 parameterMatrix <- matrix(
                    c(0, 0, 0, 0, 0, clayton_dep, 
                      0, 0, 0, 0, 0, clayton_dep,
@@ -70,14 +70,17 @@ newVineOutput <- npReparamVine$newVineOutput
 print(npReparamVine$standardized_precision_matrix_np)
 # contour(newVineOutput$RVM)
 margins <- oldVineOutput$simdata
-margins_np <- newVineOutput$simdata
+margins_np <- margins
+margins_reparamed <- pnorm(multivariate_conditional_mean_and_samples(qnorm(margins[, 1:(D-1)]), npReparamVine$fullCorMatrixMN)$generated_samples)
+margins_np[, D] <- margins_reparamed
+# margins_np <- newVineOutput$simdata
 
-ggplot(tibble(v1=qnorm(oldVineOutput$simdata[, 4]), v6=qnorm(oldVineOutput$simdata[, 6])), aes(x=v1, y=v6)) + 
+ggplot(tibble(v1=qnorm(margins[, 4]), v6=qnorm(margins[, 6])), aes(x=v1, y=v6)) + 
   # geom_point(alpha=0.2) + 
   geom_density2d_filled(alpha=0.6) +
   labs(title='True Marginal Dependence between V4 and V6')
 
-ggplot(tibble(v1=qnorm(newVineOutput$simdata[, 4]), v6=qnorm(newVineOutput$simdata[, 6])), aes(x=v1, y=v6)) + 
+ggplot(tibble(v1=qnorm(margins_np[, 5]), v6=qnorm(margins_np[, 6])), aes(x=v1, y=v6)) + 
   # geom_point(alpha=0.2) + 
   geom_density2d_filled(alpha=0.6) +
   labs(title='NP Marginal Dependence between V4 and V6')
@@ -87,10 +90,17 @@ ggplot(tibble(v1=qnorm(newVineOutput$simdata[, 4]), v6=qnorm(newVineOutput$simda
 # We know what the 56 margin should be (normal gaussian)
 # Can compare that to the marginal of 45 (which should be clayton)
 # Check that this is uniform for the true distribution and check if true for non-paranormal approx
-F4_5_np <- BiCopHfunc(margins_np[,4], margins_np[,5], family=23, par=clayton_dep)$hfunc2
+F4_5_np <- BiCopHfunc(margins_np[,4], margins_np[,5], family=3, par=clayton_dep)$hfunc2
+hist(F4_5_np)
 emp_corr <- cor(qnorm(margins_np[,6]), qnorm(margins_np[,5]))
 F6_5_np <- BiCopHfunc(margins_np[,6], margins_np[,5], family=1, par=emp_corr)$hfunc2
+hist(F6_5_np)
 cor.test(F4_5_np, F6_5_np, method=c("kendall"))
+ggplot(data.frame(F4_5_np = F4_5_np, F6_5_np = F6_5_np), aes(x = F4_5_np, y = F6_5_np)) +
+  geom_density2d_filled(alpha=0.6) +
+  labs(x = "F4_5_np", y = "F6_5_np", title = "NP Contour Plot of F4_5_np vs F6_5_np") +
+  theme_minimal()
+
 
 ggplot(data.frame(F5 = qnorm(margins_np[,5]), F6 = qnorm(margins_np[,6])), aes(x = F5, y = F6)) +
   geom_density2d_filled(alpha=0.6) +
@@ -101,80 +111,80 @@ ggplot(data.frame(F5 = qnorm(margins[,5]), F6 = qnorm(margins[,6])), aes(x = F5,
   labs(x = "F5", y = "F6", title = "True Contour Plot of F5 vs F6") +
   theme_minimal()
 
-
-library(CondIndTests)
-
-# Generate example data
-set.seed(123)
-X <- qnorm(margins[, 4])
-Y <- qnorm(margins[, 6])
-Z <- qnorm(margins[, 5])
-
-# Perform Kernel Conditional Independence Test
-kci_result <- KCI(X, Y, Z)
-print(kci_result)
-
-X_np <- qnorm(margins_np[, 4])
-Y_np <- qnorm(margins_np[, 6])
-Z_np <- qnorm(margins_np[, 5])
-
-# Perform Kernel Conditional Independence Test
-kci_result_np <- KCI(X_np, Y_np, Z_np)
-print(kci_result_np)
-
-
-F4_5 <- BiCopHfunc(margins[,4], margins[,5], family=23, par=clayton_dep)$hfunc2
-F6_5 <- BiCopHfunc(margins[,6], margins[,5], family=1, par=normal_corr)$hfunc2
-cor.test(F4_5, F6_5, method=c("kendall"))
-
-
-p1 <- ggplot(data.frame(F4_5 = qnorm(F4_5_np), F6_5 = qnorm(F6_5_np)), aes(x = F4_5, y = F6_5)) +
-  geom_density2d_filled(alpha=0.6) +
-  labs(x = "F4_5", y = "F6_5", title = "NP Contour Plot of F4_5 vs F6_5") +
-  theme_minimal()
-
-# Plot for the true distribution
-p2 <- ggplot(data.frame(F4_5 = qnorm(F4_5), F6_5 = qnorm(F6_5)), aes(x = F4_5, y = F6_5)) +
-  geom_density2d_filled(alpha=0.6) +
-  labs(x = "F4_5", y = "F6_5", title = "True Contour Plot of F4_5 vs F6_5") +
-  theme_minimal()
-
-# Combine the plots side by side
-grid.arrange(p1, p2, ncol = 2)
-
-x <- pnorm(rnorm(sampleSize))
-y <- pnorm(rnorm(sampleSize, rho*x, sqrt(1-rho^2)))
-z <- pnorm(rnorm(sampleSize, rho*y, sqrt(1-rho^2)))
-d <- data.frame(x=x,y=y,z=z)
-Fx_y <- BiCopHfunc(x, y, family=1, par=rho)$hfunc2
-Fz_y <- BiCopHfunc(z, y, family=1, par=rho)$hfunc2
-ggplot(data.frame(Fz_y=Fz_y, Fx_y=Fx_y), aes(x = Fz_y, y = Fx_y)) +
-  geom_density_2d() + 
-  labs(x = "Fz_y", y = "Fx_y", title = "Contour Plot of Fz_y vs Fx_y") +
-  theme_minimal()
-
-
-# True Model 
-trueStructureMatrix <- matrix(
-  c(4, 6, 5,
-    0, 5, 6,
-    0, 0, 6), ncol=D)
-trueFamilyMatrix <- matrix(
-  c(0, 0, 23,
-    0, 0, 1,
-    0, 0, 0), ncol=D)
-npStructureMatrix <- matrix(
-  c(6, 5, 4,
-    0, 5, 6,
-    0, 0, 6), ncol=D)
-npFamilyMatrix <- matrix(
-  c(0, 0, 23,
-    0, 0, 1,
-    0, 0, 0), ncol=D)
-
-clayton_dep <- -10
-normal_corr <- 0.5
-trueParameterMatrix <- matrix(
-  c(0, 0, clayton_dep,
-    0, 0, normal_corr,
-    0, 0, 0), ncol=D)
+# 
+# library(CondIndTests)
+# 
+# # Generate example data
+# set.seed(123)
+# X <- qnorm(margins[, 4])
+# Y <- qnorm(margins[, 6])
+# Z <- qnorm(margins[, 5])
+# 
+# # Perform Kernel Conditional Independence Test
+# kci_result <- KCI(X, Y, Z)
+# print(kci_result)
+# 
+# X_np <- qnorm(margins_np[, 4])
+# Y_np <- qnorm(margins_np[, 6])
+# Z_np <- qnorm(margins_np[, 5])
+# 
+# # Perform Kernel Conditional Independence Test
+# kci_result_np <- KCI(X_np, Y_np, Z_np)
+# print(kci_result_np)
+# 
+# 
+# F4_5 <- BiCopHfunc(margins[,4], margins[,5], family=23, par=clayton_dep)$hfunc2
+# F6_5 <- BiCopHfunc(margins[,6], margins[,5], family=1, par=normal_corr)$hfunc2
+# cor.test(F4_5, F6_5, method=c("kendall"))
+# 
+# 
+# p1 <- ggplot(data.frame(F4_5 = qnorm(F4_5_np), F6_5 = qnorm(F6_5_np)), aes(x = F4_5, y = F6_5)) +
+#   geom_density2d_filled(alpha=0.6) +
+#   labs(x = "F4_5", y = "F6_5", title = "NP Contour Plot of F4_5 vs F6_5") +
+#   theme_minimal()
+# 
+# # Plot for the true distribution
+# p2 <- ggplot(data.frame(F4_5 = qnorm(F4_5), F6_5 = qnorm(F6_5)), aes(x = F4_5, y = F6_5)) +
+#   geom_density2d_filled(alpha=0.6) +
+#   labs(x = "F4_5", y = "F6_5", title = "True Contour Plot of F4_5 vs F6_5") +
+#   theme_minimal()
+# 
+# # Combine the plots side by side
+# grid.arrange(p1, p2, ncol = 2)
+# 
+# x <- pnorm(rnorm(sampleSize))
+# y <- pnorm(rnorm(sampleSize, rho*x, sqrt(1-rho^2)))
+# z <- pnorm(rnorm(sampleSize, rho*y, sqrt(1-rho^2)))
+# d <- data.frame(x=x,y=y,z=z)
+# Fx_y <- BiCopHfunc(x, y, family=1, par=rho)$hfunc2
+# Fz_y <- BiCopHfunc(z, y, family=1, par=rho)$hfunc2
+# ggplot(data.frame(Fz_y=Fz_y, Fx_y=Fx_y), aes(x = Fz_y, y = Fx_y)) +
+#   geom_density_2d() + 
+#   labs(x = "Fz_y", y = "Fx_y", title = "Contour Plot of Fz_y vs Fx_y") +
+#   theme_minimal()
+# 
+# 
+# # True Model 
+# trueStructureMatrix <- matrix(
+#   c(4, 6, 5,
+#     0, 5, 6,
+#     0, 0, 6), ncol=D)
+# trueFamilyMatrix <- matrix(
+#   c(0, 0, 23,
+#     0, 0, 1,
+#     0, 0, 0), ncol=D)
+# npStructureMatrix <- matrix(
+#   c(6, 5, 4,
+#     0, 5, 6,
+#     0, 0, 6), ncol=D)
+# npFamilyMatrix <- matrix(
+#   c(0, 0, 23,
+#     0, 0, 1,
+#     0, 0, 0), ncol=D)
+# 
+# clayton_dep <- -10
+# normal_corr <- 0.5
+# trueParameterMatrix <- matrix(
+#   c(0, 0, clayton_dep,
+#     0, 0, normal_corr,
+#     0, 0, 0), ncol=D)

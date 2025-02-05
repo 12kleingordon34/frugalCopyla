@@ -1,3 +1,4 @@
+library(CondIndTests)
 library(copula)
 library(ppcor)
 library(VineCopula)
@@ -33,9 +34,7 @@ simulateRVineData <- function(structureMatrix, familyMatrix, parameterMatrix, sa
   RVM <- RVineMatrix(Matrix = structureMatrix, family = familyMatrix, par = parameterMatrix, names = varNames)
   
   # Set seed for reproducibility (optional)
-  if (!is.null(seed)) {
-    set.seed(seed)
-  }
+  set.seed(seed)
   
   # Simulate data from the defined R-vine model
   simdata <- RVineSim(sampleSize, RVM)
@@ -382,7 +381,7 @@ updateVineMatrices <- function(structureMatrix, familyMatrix, parameterMatrix, p
 #' results <- simulateAndReparameterizeVine(structureMatrix, familyMatrix, parameterMatrix, sampleSize, topoOrder, vineCorParams)
 #' 
 #' @export
-simulateAndReparameterizeVine <- function(structureMatrix, familyMatrix, parameterMatrix, sampleSize, topoOrder, vineCorParams, seed=NULL) {
+simulateAndReparameterizeVine <- function(structureMatrix, familyMatrix, parameterMatrix, sampleSize, topoOrder, vineCorParams, seed=1) {
   library(copula)
   library(VineCopula)
   
@@ -420,59 +419,15 @@ simulateAndReparameterizeVine <- function(structureMatrix, familyMatrix, paramet
   ))
 }
 
-
-simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder, normal_corr_values, general_dep, general_family, seed=NULL) {
-  #' Simulate and plot the results for given structure and family matrices.
-  #'
-  #' This function simulates data based on provided structure and family matrices,
-  #' iterates over a set of normal correlation values, and computes p-values for
-  #' both nonparanormal and normal models using Kendall's tau and KCI tests.
-  #' The function generates plots for each normal correlation value and returns
-  #' a table containing the computed p-values.
-  #'
-  #' @param structureMatrix Matrix indicating the structure of the model.
-  #' @param familyMatrix Matrix indicating the family relationships in the model.
-  #' @param sampleSize Integer representing the sample size for the simulation.
-  #' @param topoOrder Vector indicating the topological order of nodes.
-  #' @param normal_corr_values Numeric vector of normal correlation values to iterate over.
-  #' @param general_dep General dependency parameter for the copula.
-  #' @param general_family Integer indicating the family of copulas to be used.
-  #' @param seed Integer or NULL, specifying the seed for random number generation. If NULL, no seed is set.
-  #' 
-  #' @return A data frame containing p-values for Kendall's tau and KCI tests for both
-  #'         the nonparanormal and normal models, along with a grid of generated plots.
-  #' @examples
-  #' pval_table <- simulateAndPlot(structureMatrix, familyMatrix, sampleSize, topoOrder, c(0.1, 0.2, 0.3), 0.5, 1, seed=42)
-  
-  cat("Initializing the simulation process...\n")
-  
+simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder, normal_corr_values, general_dep, general_family, seed=1) {
   plot_list <- list() # Initialize an empty list to store ggplot objects
-  D <- dim(structureMatrix)
-  
-  if (!is.null(seed)) {
-    cat("Setting seed for reproducibility: ", seed, "\n")
-    set.seed(seed)
-  } else {
-    cat("No seed is set, results will be non-reproducible.\n")
-  }
-  
-  # Initialize an empty data frame to store p-values
-  pval_table <- data.frame(
-    normal_corr = numeric(),
-    kendall_np_pval = numeric(),
-    kci_np_pval = numeric(),
-    kendall_pval = numeric(),
-    kci_pval = numeric()
-  )
-  
+  D <- dim(structureMatrix)[1]
+  set.seed(seed)
   for (normal_corr in normal_corr_values) {
-    cat("Processing normal_corr value: ", normal_corr, "\n")
-    
     # Update the normal correlation parameter in the parameter matrix
-    parameterMatrix[D, (D[2]-1)] <- normal_corr
     vineCorParams <- normal_corr
     
-    cat("Simulating and reparameterizing vine structure...\n")
+    # Run simulation and reparameterization
     npReparamVine <- simulateAndReparameterizeVine(
       structureMatrix, 
       familyMatrix, 
@@ -483,7 +438,7 @@ simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder
     )
     
     oldVineOutput <- npReparamVine$oldVineOutput
-    
+    # newVineOutput <- npReparamVine$newVineOutput
     ###########################
     ############ HACKY SOLUTION
     ###########################
@@ -492,7 +447,7 @@ simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder
     # Final variable is the outcome
     newSimData <- newVineOutput$simdata
     covariate_ranks <- newSimData[, 1:(dim(newSimData)[2] - 1)]
-    outcome_model <- multivariate_conditional_mean_and_samples(
+    outcome_model <-multivariate_conditional_mean_and_samples(
       X2_samples = qnorm(covariate_ranks), 
       R = npReparamVine$fullCorMatrixMN
     )
@@ -508,37 +463,19 @@ simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder
     margins_np <- newVineOutput$simdata
     
     # Calculate H-functions for both old and new vine outputs
-    cat("Calculating H-functions and p-values for nonparanormal model...\n")
     F2_3_np <- BiCopHfunc(margins_np[,2], margins_np[,3], family=general_family, par=general_dep)$hfunc2
     F4_3_np <- BiCopHfunc(margins_np[,4], margins_np[,3], family=1, par=normal_corr)$hfunc2
-    kendall_np_pval <- cor.test(F4_3_np, F2_3_np, method=c("kendall"))$p.value
-    kci_result_np <- KCI(qnorm(margins_np[,2]), qnorm(margins_np[,4]), qnorm(margins_np[,3]))
-    kci_np_pval <- kci_result_np$pvalue
     
-    cat("Calculating H-functions and p-values for regular model...\n")
     F2_3 <- BiCopHfunc(margins[,2], margins[,3], family=general_family, par=general_dep)$hfunc2
     F4_3 <- BiCopHfunc(margins[,4], margins[,3], family=1, par=normal_corr)$hfunc2
-    kendall_pval <- cor.test(F4_3, F2_3, method=c("kendall"))$p.value
-    kci_result <- KCI(qnorm(margins[,2]), qnorm(margins[,4]), qnorm(margins[,3]))
-    kci_pval <- kci_result$pvalue
-    
-    # Add p-values to the data frame
-    cat("Recording p-values in the table...\n")
-    pval_table <- rbind(pval_table, data.frame(
-      normal_corr = normal_corr,
-      kendall_np_pval = kendall_np_pval,
-      kci_np_pval = kci_np_pval,
-      kendall_pval = kendall_pval,
-      kci_pval = kci_pval
-    ))
     
     # Generate plots
-    cat("Generating plots for normal_corr = ", normal_corr, "\n")
     p1 <- ggplot(data.frame(F2_3 = F2_3_np, F4_3 = F4_3_np), aes(x = F2_3, y = F4_3)) +
       stat_density_2d(aes(fill = ..level..), geom = "polygon") +  # Use stat_density_2d for filled contours
       scale_fill_viridis_c() +  # Adds a color gradient based on density levels
       labs(x = "F2_3", y = "F4_3", title = paste("NP Contour Plot of F2_3 vs F4_3 (corr =", normal_corr, ")")) +
       theme_minimal()
+    
     
     p2 <- ggplot(data.frame(F2_3 = F2_3, F4_3 = F4_3), aes(x = F2_3, y = F4_3)) +
       stat_density_2d(aes(fill = ..level..), geom = "polygon") +  # Use stat_density_2d for filled contours
@@ -552,15 +489,8 @@ simulateAndPlot <- function(structureMatrix, familyMatrix, sampleSize, topoOrder
   }
   
   # Combine all plots into a grid
-  cat("Combining plots into a grid...\n")
   do.call(grid.arrange, c(plot_list, ncol = 2))
-  
-  cat("Simulation and plotting process completed. Returning p-value table.\n")
-  
-  # Return the p-value table as well
-  return(pval_table)
 }
-
 
 
 multivariate_conditional_mean_and_samples <- function(X2_samples, R) {
@@ -569,6 +499,9 @@ multivariate_conditional_mean_and_samples <- function(X2_samples, R) {
   n_samples <- nrow(X2_samples)
   d <- nrow(R)                # Total number of variables
   
+  X2_samples <- as.matrix(X2_samples)
+  
+  print(paste0("Conditioning the distribution on index "), d)
   # Indices for partitioning the covariance matrix
   indices_1 <- d              # First variable (X1)
   indices_2 <- 1:(d-1)            # Remaining variables (X2)
@@ -582,7 +515,6 @@ multivariate_conditional_mean_and_samples <- function(X2_samples, R) {
   R22_inv <- solve(R22)
   
   # Ensure all variables are numeric matrices
-  X2_samples <- as.matrix(X2_samples)
   R12 <- as.matrix(R12)
   R22_inv <- as.matrix(R22_inv)
   
@@ -590,7 +522,8 @@ multivariate_conditional_mean_and_samples <- function(X2_samples, R) {
   conditional_variance <- R11 - R12 %*% R22_inv %*% t(R12)
   
   # Calculate the conditional mean for each sample
-  conditional_means <- X2_samples %*% t(R12 %*% R22_inv)
+  coeffs <- R12 %*% R22_inv
+  conditional_means <- t(R12 %*% R22_inv %*% t(X2_samples))
   
   # Generate samples from a Gaussian distribution with the computed conditional mean and variance
   generated_samples <- matrix(NA, nrow = n_samples, ncol = 1)
@@ -602,6 +535,301 @@ multivariate_conditional_mean_and_samples <- function(X2_samples, R) {
   return(list(
     generated_samples = generated_samples,
     conditional_means = conditional_means,
-    conditional_variance = conditional_variance
+    conditional_variance = conditional_variance,
+    coeffs = coeffs
   ))
+}
+
+#' Uncondition Conditional Ranks Using a Gaussian Copula Translation
+#'
+#' Given a matrix (or dataframe) of conditional ranks, this function iterates over the variables and
+#' "unconditions" the conditional ranks to obtain their marginal alternatives on the Gaussian (normal quantile) scale.
+#'
+#' @param cond_ranks A matrix (or dataframe) of conditional ranks. The first column is assumed to be
+#'        unconditional (U_{Z1}), the second column is U_{Z2|Z1}, the third is U_{Z3|Z1,Z2}, etc.
+#' @param R A correlation matrix corresponding to the full Gaussian copula that models the joint distribution.
+#'
+#' @return A matrix of the same dimensions as \code{cond_ranks} containing the "unconditioned" values
+#'         on the Gaussian (normal quantile) scale.
+#'
+#' @examples
+#' # Suppose we have a 3-variable example:
+#' cond_ranks <- matrix(c(runif(5), runif(5), runif(5)), ncol = 3)
+#' R <- matrix(c(1, 0.5, 0.3,
+#'               0.5, 1, 0.4,
+#'               0.3, 0.4, 1), nrow = 3, byrow = TRUE)
+#' marginal_values <- uncondition_conditional_ranks(cond_ranks, R)
+uncondition_conditional_ranks <- function(cond_ranks, R) {
+  # Ensure cond_ranks is a matrix
+  cond_ranks <- as.matrix(cond_ranks)
+  n <- nrow(cond_ranks)
+  d <- ncol(cond_ranks)
+  
+  # Prepare a matrix to store the marginal (unconditioned) values.
+  marginal_values <- matrix(NA, n, d)
+  
+  # Process each observation (each row) individually.
+  for (i in 1:n) {
+    x <- numeric(d)
+    # The first variable is unconditional.
+    x[1] <- qnorm(cond_ranks[i, 1])
+    
+    # For subsequent variables, uncondition using the Gaussian translation.
+    if (d > 1) {
+      for (j in 2:d) {
+        # Coerce r_vec into a 1-row matrix.
+        r_vec <- matrix(R[j, 1:(j-1)], nrow = 1)
+        # Ensure the submatrix is a matrix.
+        R_sub <- R[1:(j-1), 1:(j-1), drop = FALSE]
+        # Coerce the previously computed x's into a column vector.
+        x_prev <- matrix(x[1:(j-1)], ncol = 1)
+        
+        # Compute the conditional mean.
+        mu_j <- as.numeric(r_vec %*% solve(R_sub) %*% x_prev)
+        # Compute the conditional variance.
+        sigma2_j <- 1 - as.numeric(r_vec %*% solve(R_sub) %*% t(r_vec))
+        sigma_j <- sqrt(sigma2_j)
+        
+        # "Uncondition" the j-th variable by converting its conditional rank into a marginal Gaussian value.
+        x[j] <- mu_j + sigma_j * qnorm(cond_ranks[i, j])
+      }
+    }
+    marginal_values[i, ] <- x
+  }
+  
+  return(marginal_values)
+}
+
+
+
+#' Generate Outcome Rank Samples from Vine Copula Simulation with Marginal Ranks
+#'
+#' This function fits a Gaussian copula to the covariate data, constructs a full correlation
+#' matrix for the covariates and outcome (using a provided vine correlation parameter and topological order),
+#' and then generates outcome rank samples by conditioning on the simulated covariate ranks.
+#'
+#' @param covariate_data A dataframe or matrix containing the simulated covariate data (assumed to be marginally uniform).
+#' @param marginal_covariate_ranks A dataframe or matrix containing the simulated marginal covariate ranks.
+#' @param vine_cor_params A numeric vector specifying the vine correlation parameters.
+#' @param topoOrder Optional numeric vector specifying the topological order of the vine structure.
+#'        If not provided, the default order \code{1:(n_covariates+1)} is used.
+#'
+#' @return A list containing:
+#' \item{gaussianCopulaFit}{The fitted Gaussian copula model (see \code{fitMVGaussianCopula}).}
+#' \item{fullCorrelationMatrix}{The full correlation matrix (including the outcome) computed using \code{computeFullCorMatrix}.}
+#' \item{outcomeRankSamples}{A vector of outcome rank samples generated using \code{multivariate_conditional_mean_and_samples}.}
+#'
+#' @examples
+#' \dontrun{
+#'   # Assume cov_data and cond_ranks are defined and vine_params is a numeric vector
+#'   results <- simulateOutcomeSamples(covariate_data = cov_data, 
+#'                                     marginal_covariate_ranks = ranks,
+#'                                     vine_cor_params = vine_params)
+#'   head(results$outcomeRankSamples)
+#' }
+simulateMarginalOutcomeSamples <- function(covariate_data,
+                                   marginal_covariate_ranks,
+                                   vine_cor_params,
+                                   topoOrder = NULL) {
+  ## Step 1: Fit the Gaussian copula to the covariate data.
+  cov_data_matrix <- as.matrix(covariate_data)
+  gaussianCopulaFit <- fitMVGaussianCopula(dataQuantiles = cov_data_matrix, method = 'itau')
+  
+  ## Step 2: Construct the full correlation matrix.
+  n_cov <- ncol(cov_data_matrix)
+  if (is.null(topoOrder)) {
+    topoOrder <- 1:(n_cov + 1)
+  }
+  # Use the correlation matrix from the Gaussian copula fit.
+  corMatrixMN <- gaussianCopulaFit$correlationMatrix
+  fullCorrelationMatrix <- computeFullCorMatrix(topoOrder, corMatrixMN, vine_cor_params)
+  
+  ## Step 3: Generate outcome rank samples.
+  # Transform the simulated conditional covariate ranks with qnorm (to obtain normal scores).
+  X2_samples <- qnorm(as.matrix(marginal_covariate_ranks))
+  outcome_model <- multivariate_conditional_mean_and_samples(X2_samples = X2_samples, 
+                                                             R = fullCorrelationMatrix)
+  outcomeRankSamples <- pnorm(outcome_model$generated_samples)
+  
+  return(list(
+    gaussianCopulaFit = gaussianCopulaFit,
+    fullCorrelationMatrix = fullCorrelationMatrix,
+    outcomeRankSamples = outcomeRankSamples
+  ))
+}
+
+#' Generate Outcome Rank Samples from Vine Copula Simulation with Marginal Ranks
+#'
+#' This function fits a Gaussian copula to the covariate data, constructs a full correlation
+#' matrix for the covariates and outcome (using a provided vine correlation parameter and topological order),
+#' and then generates outcome rank samples by conditioning on the simulated covariate ranks.
+#'
+#' @param covariate_data A dataframe or matrix containing the simulated covariate data (assumed to be marginally uniform).
+#' @param cond_covariate_ranks A dataframe or matrix containing the simulated conditional covariate ranks.
+#' @param vine_cor_params A numeric vector specifying the vine correlation parameters.
+#' @param topoOrder Optional numeric vector specifying the topological order of the vine structure.
+#'        If not provided, the default order \code{1:(n_covariates+1)} is used.
+#'
+#' @return A list containing:
+#' \item{gaussianCopulaFit}{The fitted Gaussian copula model (see \code{fitMVGaussianCopula}).}
+#' \item{fullCorrelationMatrix}{The full correlation matrix (including the outcome) computed using \code{computeFullCorMatrix}.}
+#' \item{outcomeRankSamples}{A vector of outcome rank samples generated using \code{multivariate_conditional_mean_and_samples}.}
+#'
+#' @examples
+#' \dontrun{
+#'   # Assume cov_data and cond_ranks are defined and vine_params is a numeric vector
+#'   results <- simulateOutcomeSamples(covariate_data = cov_data, 
+#'                                     marginal_covariate_ranks = ranks,
+#'                                     vine_cor_params = vine_params)
+#'   head(results$outcomeRankSamples)
+#' }
+simulateConditionalOutcomeSamples <- function(covariate_data,
+                                              cond_covariate_ranks,
+                                           vine_cor_params,
+                                           topoOrder = NULL) {
+  ## Step 1: Fit the Gaussian copula to the covariate data.
+  cov_data_matrix <- as.matrix(covariate_data)
+  gaussianCopulaFit <- fitMVGaussianCopula(dataQuantiles = cov_data_matrix, method = 'itau')
+  
+  ## Step 2: Construct the full correlation matrix.
+  n_cov <- ncol(cov_data_matrix)
+  if (is.null(topoOrder)) {
+    topoOrder <- 1:(n_cov + 1)
+  }
+  # Use the correlation matrix from the Gaussian copula fit.
+  corMatrixMN <- gaussianCopulaFit$correlationMatrix
+  fullCorrelationMatrix <- computeFullCorMatrix(topoOrder, corMatrixMN, vine_cor_params)
+  
+  ## Step 3: Generate outcome rank samples.
+  # Transform the simulated conditional covariate ranks with qnorm (to obtain normal scores).
+  X2_samples <- qnorm(as.matrix(marginal_covariate_ranks))
+  outcome_model <- multivariate_conditional_mean_and_samples(X2_samples = X2_samples, 
+                                                             R = fullCorrelationMatrix)
+  outcomeRankSamples <- pnorm(outcome_model$generated_samples)
+  
+  return(list(
+    gaussianCopulaFit = gaussianCopulaFit,
+    fullCorrelationMatrix = fullCorrelationMatrix,
+    outcomeRankSamples = outcomeRankSamples
+  ))
+}
+
+#' Bootstrapped Kendall's Tau Test for Two Vectors
+#'
+#' This function performs a bootstrapped hypothesis test using Kendall's tau on two input vectors.
+#' In each bootstrap iteration the function resamples (with replacement) the data and computes the Kendall
+#' correlation test p‑value. Under independence, the distribution of these p‑values should be approximately uniform.
+#'
+#' @param x A numeric vector.
+#' @param y A numeric vector.
+#' @param n_boot The number of bootstrap iterations (default is 500).
+#' @param sample_size The number of samples to draw in each bootstrap iteration (default is the length of \code{x}).
+#'
+#' @return A numeric vector of bootstrapped p‑values from Kendall's tau tests.
+#'
+#' @examples
+#' \dontrun{
+#'   # Assume x and y are numeric vectors of equal length
+#'   p_values <- bootstrappedKendallTest(x, y, n_boot = 500)
+#'   hist(p_values, main = "Bootstrapped Kendall's Tau p-values", xlab = "p-value")
+#' }
+bootstrappedKendallTest <- function(x, y, n_boot = 500, sample_size = length(x)) {
+  if (length(x) != length(y)) {
+    stop("x and y must be of the same length")
+  }
+  
+  n <- length(x)
+  p_values <- numeric(n_boot)
+  
+  for (i in 1:n_boot) {
+    # Draw a bootstrap sample (with replacement)
+    boot_idx <- sample(1:n, sample_size, replace = TRUE)
+    boot_x <- x[boot_idx]
+    boot_y <- y[boot_idx]
+    
+    # Compute the Kendall's tau test p-value.
+    test_result <- cor.test(boot_x, boot_y, method = "kendall")
+    p_values[i] <- test_result$p.value
+  }
+  
+  return(p_values)
+}
+
+
+#' Bootstrapped Kernel Conditional Independence Test (KCI) with Improved Settings and Progress Bar
+#'
+#' This function performs a bootstrapped conditional independence test using the KCI test with improved
+#' settings. It resamples the data (with replacement) and, for each bootstrap iteration, calls the KCI
+#' function with automatically tuned kernel hyperparameters (using GP regression) and Gamma approximation.
+#'
+#' A progress bar is displayed during the bootstrapping iterations.
+#'
+#' @param x A numeric vector.
+#' @param y A numeric vector.
+#' @param z A matrix or dataframe of conditioning variables (one row per observation).
+#' @param n_boot The number of bootstrap iterations (default is 500).
+#' @param sample_size The number of observations to sample in each bootstrap iteration (default is the length of x).
+#'
+#' @return A numeric vector of bootstrap p‑values from the KCI tests.
+#'
+#' @examples
+#' \dontrun{
+#'   # Suppose X, Y are numeric vectors and Z is a matrix of conditioning variables.
+#'   p_values <- bootstrappedKCI(X, Y, Z, n_boot = 500)
+#'   hist(p_values, main = "Bootstrapped KCI p-values", xlab = "p-value")
+#' }
+bootstrappedKCI <- function(x, y, z, n_boot = 500, sample_size = length(x)) {
+  # Check that x and y have the same length.
+  if (length(x) != length(y)) {
+    stop("x and y must be of the same length")
+  }
+  
+  # Ensure that the number of rows in z matches the length of x.
+  if (nrow(as.matrix(z)) != length(x)) {
+    stop("The number of rows in z must match the length of x and y")
+  }
+  
+  n <- length(x)
+  p_values <- numeric(n_boot)
+  
+  # Create a progress bar.
+  pb <- txtProgressBar(min = 0, max = n_boot, style = 3)
+  
+  for (i in 1:n_boot) {
+    # Draw bootstrap sample indices with replacement.
+    boot_idx <- sample(1:n, sample_size, replace = TRUE)
+    
+    boot_x <- x[boot_idx]
+    boot_y <- y[boot_idx]
+    boot_z <- as.matrix(z)[boot_idx, , drop = FALSE]
+    
+    # Run the Kernel Conditional Independence test with the specified settings.
+    kci_result <- tryCatch({
+      KCI(boot_x, boot_y, boot_z,
+          width      = 0,
+          alpha      = 0.05,
+          unbiased   = FALSE,
+          gammaApprox= FALSE,
+          GP         = TRUE,
+          nRepBs     = 1000,
+          lambda     = 0.001,
+          thresh     = 1e-05,
+          numEig     = length(boot_x),
+          verbose    = FALSE)
+    }, error = function(e) {
+      message("Error in KCI on bootstrap iteration ", i, ": ", e$message)
+      return(list(pvalue = NA))
+    })
+    
+    # Save the bootstrap p-value.
+    p_values[i] <- kci_result$pvalue
+    
+    # Update the progress bar.
+    setTxtProgressBar(pb, i)
+  }
+  
+  # Close the progress bar.
+  close(pb)
+  
+  return(p_values)
 }
