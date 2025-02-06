@@ -1,3 +1,4 @@
+library(bnlearn)
 library(CondIndTests)
 library(copula)
 library(ppcor)
@@ -94,61 +95,54 @@ fitMVGaussianCopula <- function(dataQuantiles, method='itau') {
 #' @return The full correlation matrix.
 #' @examples
 #' computeFullCorMatrix(topoOrder = c(1, 2, 3), corMatrixMN = my_cor_matrix, vineCorParams = my_params)
-computeFullCorMatrix <- function(topoOrder, corMatrixMN, vineCorParams) {
+computeFullCorMatrix <- function(invTopoOrder, corMatrixMN, vineCorParams) {
   # Ensure the input correlation matrix matches the topological order size
-  MplusN <- length(topoOrder) - 1
-  N <- length(vineCorParams)
-  M <- MplusN - N
-  if (!all(dim(corMatrixMN) == c(MplusN, MplusN))) {
-    stop("Dimension mismatch: corMatrixMN should match the length of topoOrder")
+  D <- length(invTopoOrder)
+  # N <- length(vineCorParams)
+  # M <- D - N
+  if (!all(dim(corMatrixMN) == c(D, D))) {
+    stop("Dimension mismatch: corMatrixMN should match the length of invTopoOrder")
   }
   
   # Initialize full correlation matrix with diagonal ones
-  fullCorMatrix <- diag(1, MplusN+1)
-  fullCorMatrix[1:MplusN, 1:MplusN] <- corMatrixMN
+  fullCorMatrix <- diag(1, D+1)
+  fullCorMatrix[1:D, 1:D] <- corMatrixMN
   
   # Add the M+Nth variable (last of N) and its marginal correlation with Y
-  fullCorMatrix[MplusN, MplusN + 1] <- fullCorMatrix[MplusN + 1, MplusN] <- tail(vineCorParams, 1)
+  fullCorMatrix[D, D + 1] <- fullCorMatrix[D + 1, D] <- head(vineCorParams, 1)
   
   # Define the initial conditioning set B as the last variable
-  conditioningSet <- MplusN
+  conditioningSet <- invTopoOrder[1]
   
   # Loop over N variables in reverse topological order
-  for (i in (MplusN-1):1) {
-    if (i %in% topoOrder[(M+1):MplusN]) {
-      # Set A is Y and the current variable
-      rho <- vineCorParams[which(topoOrder[(MplusN-N+1):MplusN] == i)]
-    } else {
-      rho <- 0 
-    }
+  # for (i in (D-1):1) {
+  vineCorParamsReduced <- vineCorParams[2:D]
+  for (i in seq_along(invTopoOrder[2:D])) {  
+    rho <- vineCorParamsReduced[i]
+    # if (i %in% invTopoOrder[(M+1):D]) {
+    #   # Set A is Y and the current variable
+    #   rho <- vineCorParams[which(invTopoOrder[(D-N+1):D] == i)]
+    # } else {
+    #   rho <- 0 
+    # }
     # Set A is Y and the current variable
-    Sigma_AB <- matrix(fullCorMatrix[c(i, MplusN+1), c(conditioningSet)], nrow=2)
+    Sigma_AB <- matrix(fullCorMatrix[c(i, D+1), c(conditioningSet)], nrow=2)
     Sigma_BB <- corMatrixMN[conditioningSet, conditioningSet]
 
     # Compute marginal correlation
     rho_marginal <- computeConditionalCovariance(rho, Sigma_AB, Sigma_BB)
     
     # Append the computed marginal correlation to the full correlation matrix
-    fullCorMatrix[i, MplusN + 1] <- fullCorMatrix[MplusN + 1, i] <- rho_marginal
+    fullCorMatrix[i, D + 1] <- fullCorMatrix[D + 1, i] <- rho_marginal
     
     
     # Add the current variable to the conditioning set
     conditioningSet <- c(i, conditioningSet)
   }
-  
   return(fullCorMatrix)
 }
 
-#' Compute the full correlation matrix from partial correlations.
-#' 
-#' This function computes the full correlation matrix from the partial correlations and the topological order of the vine copula structure.
-#' 
-#' @param topoOrder A vector specifying the topological order of the vine copula structure.
-#' @param corMatrixMN The correlation matrix of the M+N variables.
-#' @param vineCorParams The parameters of the vine copula model.
-#' @return The full correlation matrix.
-#' @examples
-#' computeFullCorMatrix(topoOrder = c(1, 2, 3), corMatrixMN = my_cor_matrix, vineCorParams = my_params)
+
 computeConditionalCovariance <- function(rho, Sigma_AB, Sigma_BB) {
   # if (!all(dim(Sigma_AB) == c(2, length(Sigma_BB)))) {
   #   stop("Dimension mismatch: Sigma_AB should be 2xlength(Sigma_BB)")
@@ -597,7 +591,7 @@ uncondition_conditional_ranks <- function(cond_ranks, R) {
     marginal_values[i, ] <- x
   }
   
-  return(marginal_values)
+  return(pnorm(marginal_values))
 }
 
 
@@ -700,6 +694,8 @@ simulateConditionalOutcomeSamples <- function(covariate_data,
   corMatrixMN <- gaussianCopulaFit$correlationMatrix
   fullCorrelationMatrix <- computeFullCorMatrix(topoOrder, corMatrixMN, vine_cor_params)
   
+  
+  marginal_covariate_ranks <- uncondition_conditional_ranks(cond_covariate_ranks, corMatrixMN)
   ## Step 3: Generate outcome rank samples.
   # Transform the simulated conditional covariate ranks with qnorm (to obtain normal scores).
   X2_samples <- qnorm(as.matrix(marginal_covariate_ranks))
@@ -823,6 +819,91 @@ bootstrappedKCI <- function(x, y, z, n_boot = 500, sample_size = length(x)) {
     
     # Save the bootstrap p-value.
     p_values[i] <- kci_result$pvalue
+    
+    # Update the progress bar.
+    setTxtProgressBar(pb, i)
+  }
+  
+  # Close the progress bar.
+  close(pb)
+  
+  return(p_values)
+}
+
+
+#' Bootstrapped Conditional Independence Test using bnlearn::ci.test
+#'
+#' This function performs a bootstrapped conditional independence test using bnlearn's ci.test.
+#' For each bootstrap iteration, it resamples the data (with replacement) and computes the p-value
+#' from ci.test. Under the null hypothesis of conditional independence, the distribution of p-values
+#' should be approximately uniform.
+#'
+#' @param x A numeric vector.
+#' @param y A numeric vector.
+#' @param z A matrix or dataframe of conditioning variables (one row per observation).
+#' @param n_boot The number of bootstrap iterations (default is 500).
+#' @param sample_size The number of observations to sample in each bootstrap iteration (default is length(x)).
+#' @param test The conditional independence test to use (default is "cor" for linear Gaussian tests).
+#'
+#' @return A numeric vector of bootstrap p-values from ci.test.
+#'
+#' @examples
+#' \dontrun{
+#'   # Generate some example data:
+#'   set.seed(123)
+#'   n <- 1000
+#'   x <- rnorm(n)
+#'   y <- rnorm(n)
+#'   z <- data.frame(Z1 = rnorm(n), Z2 = runif(n))
+#'   
+#'   # Run the bootstrapped CI test:
+#'   p_values <- bootstrappedCITest(x, y, z, n_boot = 500, test = "cor")
+#'   hist(p_values, main = "Bootstrapped ci.test p-values", xlab = "p-value")
+#' }
+bootstrappedCITest <- function(x, y, z, n_boot = 500, sample_size = length(x), test = "cor") {
+  # Check that x and y have the same length.
+  if (length(x) != length(y)) {
+    stop("x and y must be of the same length")
+  }
+  
+  # Ensure that the number of rows in z matches the length of x.
+  if (nrow(as.matrix(z)) != length(x)) {
+    stop("The number of rows in z must match the length of x and y")
+  }
+  
+  n <- length(x)
+  p_values <- numeric(n_boot)
+  
+  # Create a progress bar.
+  pb <- txtProgressBar(min = 0, max = n_boot, style = 3)
+  
+  for (i in 1:n_boot) {
+    # Draw bootstrap sample indices with replacement.
+    boot_idx <- sample(1:n, sample_size, replace = TRUE)
+    
+    # Resample the data.
+    boot_x <- x[boot_idx]
+    boot_y <- y[boot_idx]
+    boot_z <- as.data.frame(as.matrix(z)[boot_idx, , drop = FALSE])
+    
+    # Build a data frame with standardized column names.
+    df <- data.frame(A = boot_x, B = boot_y, boot_z)
+    # The conditioning variables are the remaining columns.
+    cond_vars <- names(boot_z)
+    
+    # Run bnlearn's conditional independence test.
+    test_result <- tryCatch({
+      ci.test(x = "A", y = "B", z = cond_vars, data = df, test = test)
+    }, error = function(e) {
+      message("Error in ci.test on iteration ", i, ": ", e$message)
+      return(list(p.value = NA))
+    })
+    
+    # Extract the p-value (if missing, assign NA).
+    p_val <- test_result$p.value
+    if (is.null(p_val) || length(p_val) == 0)
+      p_val <- NA
+    p_values[i] <- p_val
     
     # Update the progress bar.
     setTxtProgressBar(pb, i)

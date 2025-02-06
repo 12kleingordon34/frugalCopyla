@@ -62,8 +62,8 @@ covariate_data <- simulatedData[, 1:(D - 1)]
 marg_covariate_ranks <- covariate_data
 
 # Define the topological order (here the natural order: 1,2,...,D) and set the vine correlation parameter.
-topoOrder <- 1:D
-vine_cor_params <- normal_corr
+topoOrder <- (D-1):1
+vine_cor_params <- c(normal_corr,0,0,0,0,0)
 
 # ------------------------------------------------------------------
 # (i) Generate Outcome Rank Samples Using simulateOutcomeSamples
@@ -94,8 +94,6 @@ hist(u4_5_np)
 emp_corr <- cor(qnorm(outcomeRankSamples), qnorm(marg_covariate_ranks[,5]))
 u6_5_np <- BiCopHfunc(outcomeRankSamples, marg_covariate_ranks[,5], family=1, par=normal_corr)$hfunc2
 hist(u6_5_np)
-test.results <- cor.test(F4_5_np, F6_5_np, method=c("kendall"))
-test.results$p.value
 
 # For example, test independence between covariate 1 and covariate 2.
 p_values <- bootstrappedKendallTest(x = u4_5_np, y = u6_5_np, n_boot = 1000, sample_size = 100)
@@ -106,3 +104,4 @@ ggplot(data.frame(p_value = p_values), aes(x = p_value)) +
   labs(title = "Bootstrapped Kendall's Tau p-values (Covariate 1 vs Covariate 2)",
        x = "p-value", y = "Frequency") +
   theme_minimal()
+
