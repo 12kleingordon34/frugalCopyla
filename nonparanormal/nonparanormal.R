@@ -1,8 +1,114 @@
 library(bnlearn)
 library(CondIndTests)
 library(copula)
+library(GeneralisedCovarianceMeasure)
 library(ppcor)
 library(VineCopula)
+
+# =============================================================================
+# DAG Helper Functions for Longitudinal Models
+# =============================================================================
+
+#' Create Longitudinal DAG Structure
+#'
+#' Generates a DAG parent structure for longitudinal/temporal models with
+#' multiple covariates per time point. Column ordering: Z1_1, Z2_1, ..., Z1_2, Z2_2, ...
+#'
+#' @param n_time Number of time points.
+#' @param n_cov Number of covariates per time point.
+#' @param structure Type of temporal structure: "markov" (default), "ar1", or "full" (D-vine).
+#'
+#' @return A list of parent indices with length n_time * n_cov.
+#'
+#' @examples
+#' # 3 time points, 2 covariates, Markov structure
+#' parents <- make_longitudinal_dag(n_time = 3, n_cov = 2, structure = "markov")
+make_longitudinal_dag <- function(n_time, n_cov, structure = c("markov", "ar1", "full")) {
+  structure <- match.arg(structure)
+
+  if (n_time < 1) stop("n_time must be at least 1")
+  if (n_cov < 1) stop("n_cov must be at least 1")
+
+  n_vars <- n_time * n_cov
+  parents <- vector("list", n_vars)
+
+  # Helper: (covariate d, time t) -> column index (1-based)
+  col_idx <- function(d, t) {
+    (t - 1) * n_cov + d
+  }
+
+  # Generate variable names
+  var_names <- character(n_vars)
+  for (t in seq_len(n_time)) {
+    for (d in seq_len(n_cov)) {
+      var_names[col_idx(d, t)] <- paste0("Z", d, "_", t)
+    }
+  }
+
+  # Build parent structure
+  for (t in seq_len(n_time)) {
+    for (d in seq_len(n_cov)) {
+      j <- col_idx(d, t)
+
+      if (structure == "full") {
+        # D-vine: all previous columns
+        if (j == 1) {
+          parents[[j]] <- integer(0)
+        } else {
+          parents[[j]] <- seq_len(j - 1)
+        }
+
+      } else if (structure == "ar1") {
+        # Pure AR(1): only same covariate at previous time
+        if (t == 1) {
+          parents[[j]] <- integer(0)
+        } else {
+          parents[[j]] <- col_idx(d, t - 1)
+        }
+
+      } else {
+        # "markov" structure
+        pa <- integer(0)
+
+        # AR term: same covariate at previous time
+        if (t > 1) {
+          pa <- c(pa, col_idx(d, t - 1))
+        }
+
+        # Cross-sectional: all preceding covariates at current time
+        if (d > 1) {
+          pa <- c(pa, sapply(seq_len(d - 1), function(dd) col_idx(dd, t)))
+        }
+
+        parents[[j]] <- sort(pa)
+      }
+    }
+  }
+
+  attr(parents, "var_names") <- var_names
+  return(parents)
+}
+
+#' Create Simple Chain DAG
+#'
+#' Creates a DAG: X1 -> X2 -> X3 -> ... -> Xn.
+#'
+#' @param n_vars Number of variables in the chain.
+#' @return A list of parent indices.
+make_chain_dag <- function(n_vars) {
+  if (n_vars < 1) stop("n_vars must be at least 1")
+
+  parents <- vector("list", n_vars)
+  parents[[1]] <- integer(0)
+
+  if (n_vars > 1) {
+    for (j in 2:n_vars) {
+      parents[[j]] <- j - 1L
+    }
+  }
+
+  return(parents)
+}
 
 #' Simulate data from an R-vine copula model.
 #' 
@@ -95,13 +201,13 @@ fitMVGaussianCopula <- function(dataQuantiles, method='itau') {
 #' @return The full correlation matrix.
 #' @examples
 #' computeFullCorMatrix(topoOrder = c(1, 2, 3), corMatrixMN = my_cor_matrix, vineCorParams = my_params)
-computeFullCorMatrix <- function(invTopoOrder, corMatrixMN, vineCorParams) {
+computeFullCorMatrix <- function(topoOrder, corMatrixMN, vineCorParams) {
   # Ensure the input correlation matrix matches the topological order size
-  D <- length(invTopoOrder)
+  D <- length(topoOrder)
   # N <- length(vineCorParams)
   # M <- D - N
   if (!all(dim(corMatrixMN) == c(D, D))) {
-    stop("Dimension mismatch: corMatrixMN should match the length of invTopoOrder")
+    stop("Dimension mismatch: corMatrixMN should match the length of topoOrder")
   }
   
   # Initialize full correlation matrix with diagonal ones
@@ -112,16 +218,15 @@ computeFullCorMatrix <- function(invTopoOrder, corMatrixMN, vineCorParams) {
   fullCorMatrix[D, D + 1] <- fullCorMatrix[D + 1, D] <- head(vineCorParams, 1)
   
   # Define the initial conditioning set B as the last variable
-  conditioningSet <- invTopoOrder[1]
+  conditioningSet <- topoOrder[1]
   
   # Loop over N variables in reverse topological order
-  # for (i in (D-1):1) {
-  vineCorParamsReduced <- vineCorParams[2:D]
-  for (i in seq_along(invTopoOrder[2:D])) {  
-    rho <- vineCorParamsReduced[i]
-    # if (i %in% invTopoOrder[(M+1):D]) {
+  for (i in topoOrder[2:D]) {
+    # Need to fix the line below to ensure consistency in the order we're sampling variables.
+    rho <- vineCorParams[which(topoOrder[1:D] == i)]
+    # if (i %in% topoOrder[(M+1):D]) {
     #   # Set A is Y and the current variable
-    #   rho <- vineCorParams[which(invTopoOrder[(D-N+1):D] == i)]
+    #   rho <- vineCorParams[which(topoOrder[(D-N+1):D] == i)]
     # } else {
     #   rho <- 0 
     # }
@@ -139,10 +244,20 @@ computeFullCorMatrix <- function(invTopoOrder, corMatrixMN, vineCorParams) {
     # Add the current variable to the conditioning set
     conditioningSet <- c(i, conditioningSet)
   }
+  
   return(fullCorMatrix)
 }
 
-
+#' Compute the full correlation matrix from partial correlations.
+#' 
+#' This function computes the full correlation matrix from the partial correlations and the topological order of the vine copula structure.
+#' 
+#' @param topoOrder A vector specifying the topological order of the vine copula structure.
+#' @param corMatrixMN The correlation matrix of the M+N variables.
+#' @param vineCorParams The parameters of the vine copula model.
+#' @return The full correlation matrix.
+#' @examples
+#' computeFullCorMatrix(topoOrder = c(1, 2, 3), corMatrixMN = my_cor_matrix, vineCorParams = my_params)
 computeConditionalCovariance <- function(rho, Sigma_AB, Sigma_BB) {
   # if (!all(dim(Sigma_AB) == c(2, length(Sigma_BB)))) {
   #   stop("Dimension mismatch: Sigma_AB should be 2xlength(Sigma_BB)")
@@ -539,12 +654,20 @@ multivariate_conditional_mean_and_samples <- function(X2_samples, R) {
 #' Given a matrix (or dataframe) of conditional ranks, this function iterates over the variables and
 #' "unconditions" the conditional ranks to obtain their marginal alternatives on the Gaussian (normal quantile) scale.
 #'
+#' By default, assumes a fully-connected D-vine structure where each variable is conditioned on all
+#' previous variables. For sparser structures (e.g., from a DAG), use the parents argument.
+#'
 #' @param cond_ranks A matrix (or dataframe) of conditional ranks. The first column is assumed to be
 #'        unconditional (U_{Z1}), the second column is U_{Z2|Z1}, the third is U_{Z3|Z1,Z2}, etc.
 #' @param R A correlation matrix corresponding to the full Gaussian copula that models the joint distribution.
+#' @param parents Optional list specifying the parent columns for each variable.
+#'   parents[[j]] should be an integer vector of column indices that are parents of variable j.
+#'   If NULL (default), assumes D-vine structure (each variable conditioned on all previous).
+#'   Use make_longitudinal_dag() to generate appropriate parent structures.
+#' @param check_order Logical. If TRUE (default), validates topological order.
 #'
 #' @return A matrix of the same dimensions as \code{cond_ranks} containing the "unconditioned" values
-#'         on the Gaussian (normal quantile) scale.
+#'         transformed back to the probability scale [0, 1].
 #'
 #' @examples
 #' # Suppose we have a 3-variable example:
@@ -553,44 +676,103 @@ multivariate_conditional_mean_and_samples <- function(X2_samples, R) {
 #'               0.5, 1, 0.4,
 #'               0.3, 0.4, 1), nrow = 3, byrow = TRUE)
 #' marginal_values <- uncondition_conditional_ranks(cond_ranks, R)
-uncondition_conditional_ranks <- function(cond_ranks, R) {
+#'
+#' # With DAG structure Z1 -> Z2 -> Z3 (Z3 only depends on Z2)
+#' parents <- list(integer(0), c(1), c(2))
+#' marginal_values <- uncondition_conditional_ranks(cond_ranks, R, parents)
+uncondition_conditional_ranks <- function(cond_ranks, R, parents = NULL, check_order = TRUE) {
   # Ensure cond_ranks is a matrix
   cond_ranks <- as.matrix(cond_ranks)
   n <- nrow(cond_ranks)
   d <- ncol(cond_ranks)
-  
+
+  # If parents not specified, use default D-vine structure (all previous)
+  if (is.null(parents)) {
+    parents <- vector("list", d)
+    parents[[1]] <- integer(0)
+    if (d > 1) {
+      for (j in 2:d) {
+        parents[[j]] <- 1:(j - 1)
+      }
+    }
+  }
+
+  # Validate parents structure
+  if (length(parents) != d) {
+    stop("Length of 'parents' must equal number of columns in cond_ranks")
+  }
+
+  # Validate topological order if requested
+  if (check_order) {
+    for (j in seq_len(d)) {
+      pa_j <- parents[[j]]
+      if (length(pa_j) > 0) {
+        if (any(pa_j >= j)) {
+          bad_parents <- pa_j[pa_j >= j]
+          stop(sprintf(
+            "Invalid topological order: variable %d has parent(s) %s with index >= %d. ",
+            j, paste(bad_parents, collapse = ", "), j
+          ))
+        }
+        if (any(pa_j < 1)) {
+          stop(sprintf("Invalid parent index for variable %d: indices must be >= 1", j))
+        }
+      }
+    }
+  }
+
+  # Cache for R_sub inversions - avoid redundant solve() calls
+  inversion_cache <- new.env(hash = TRUE, parent = emptyenv())
+
+  get_R_sub_inv <- function(pa_idx) {
+    if (length(pa_idx) == 0) return(NULL)
+    pa_key <- paste(sort(pa_idx), collapse = ",")
+    if (!exists(pa_key, envir = inversion_cache)) {
+      R_sub <- R[pa_idx, pa_idx, drop = FALSE]
+      inversion_cache[[pa_key]] <- solve(R_sub)
+    }
+    return(inversion_cache[[pa_key]])
+  }
+
+  # Pre-compute all necessary inversions
+  for (j in seq_len(d)) {
+    if (length(parents[[j]]) > 0) {
+      get_R_sub_inv(parents[[j]])
+    }
+  }
+
   # Prepare a matrix to store the marginal (unconditioned) values.
-  marginal_values <- matrix(NA, n, d)
-  
+  marginal_values <- matrix(NA_real_, n, d)
+
   # Process each observation (each row) individually.
   for (i in 1:n) {
     x <- numeric(d)
-    # The first variable is unconditional.
-    x[1] <- qnorm(cond_ranks[i, 1])
-    
-    # For subsequent variables, uncondition using the Gaussian translation.
-    if (d > 1) {
-      for (j in 2:d) {
-        # Coerce r_vec into a 1-row matrix.
-        r_vec <- matrix(R[j, 1:(j-1)], nrow = 1)
-        # Ensure the submatrix is a matrix.
-        R_sub <- R[1:(j-1), 1:(j-1), drop = FALSE]
-        # Coerce the previously computed x's into a column vector.
-        x_prev <- matrix(x[1:(j-1)], ncol = 1)
-        
+
+    for (j in 1:d) {
+      pa_j <- parents[[j]]
+
+      if (length(pa_j) == 0) {
+        # Root variable: unconditional
+        x[j] <- qnorm(cond_ranks[i, j])
+      } else {
+        # Non-root: uncondition using the specified parents
+        r_vec <- matrix(R[j, pa_j], nrow = 1)
+        R_sub_inv <- get_R_sub_inv(pa_j)
+        x_pa <- matrix(x[pa_j], ncol = 1)
+
         # Compute the conditional mean.
-        mu_j <- as.numeric(r_vec %*% solve(R_sub) %*% x_prev)
+        mu_j <- as.numeric(r_vec %*% R_sub_inv %*% x_pa)
         # Compute the conditional variance.
-        sigma2_j <- 1 - as.numeric(r_vec %*% solve(R_sub) %*% t(r_vec))
-        sigma_j <- sqrt(sigma2_j)
-        
-        # "Uncondition" the j-th variable by converting its conditional rank into a marginal Gaussian value.
+        sigma2_j <- 1 - as.numeric(r_vec %*% R_sub_inv %*% t(r_vec))
+        sigma_j <- sqrt(max(sigma2_j, 1e-10))
+
+        # "Uncondition" the j-th variable
         x[j] <- mu_j + sigma_j * qnorm(cond_ranks[i, j])
       }
     }
     marginal_values[i, ] <- x
   }
-  
+
   return(pnorm(marginal_values))
 }
 
@@ -710,11 +892,12 @@ simulateConditionalOutcomeSamples <- function(covariate_data,
   ))
 }
 
+
 #' Bootstrapped Kendall's Tau Test for Two Vectors
 #'
 #' This function performs a bootstrapped hypothesis test using Kendall's tau on two input vectors.
-#' In each bootstrap iteration the function resamples (with replacement) the data and computes the Kendall
-#' correlation test p‑value. Under independence, the distribution of these p‑values should be approximately uniform.
+#' For each bootstrap iteration, it resamples (with replacement) the data and computes the Kendall's tau test p‑value.
+#' Under the null hypothesis of independence, the distribution of these p‑values should be approximately uniform.
 #'
 #' @param x A numeric vector.
 #' @param y A numeric vector.
@@ -737,6 +920,9 @@ bootstrappedKendallTest <- function(x, y, n_boot = 500, sample_size = length(x))
   n <- length(x)
   p_values <- numeric(n_boot)
   
+  # Create a progress bar.
+  pb <- txtProgressBar(min = 0, max = n_boot, style = 3)
+  
   for (i in 1:n_boot) {
     # Draw a bootstrap sample (with replacement)
     boot_idx <- sample(1:n, sample_size, replace = TRUE)
@@ -746,8 +932,12 @@ bootstrappedKendallTest <- function(x, y, n_boot = 500, sample_size = length(x))
     # Compute the Kendall's tau test p-value.
     test_result <- cor.test(boot_x, boot_y, method = "kendall")
     p_values[i] <- test_result$p.value
+    
+    # Update the progress bar.
+    setTxtProgressBar(pb, i)
   }
   
+  close(pb)
   return(p_values)
 }
 
@@ -912,5 +1102,172 @@ bootstrappedCITest <- function(x, y, z, n_boot = 500, sample_size = length(x), t
   # Close the progress bar.
   close(pb)
   
+  return(p_values)
+}
+
+#' Bootstrapped Conditional Independence Test using gcm.test
+#'
+#' This function performs a bootstrapped conditional independence test using
+#' gcm.test() from the GeneralisedCovarianceMeasure package. In each bootstrap iteration,
+#' it resamples the data (with replacement) and calls gcm.test() with the supplied arguments.
+#' The p‑values are collected and returned.
+#'
+#' @param x A numeric vector.
+#' @param y A numeric vector.
+#' @param z A matrix or dataframe of conditioning variables (with one row per observation).
+#' @param n_boot The number of bootstrap iterations (default is 500).
+#' @param sample_size The number of observations to sample in each bootstrap iteration (default is the length of x).
+#' @param verbose A logical flag; if TRUE, messages will be printed for errors.
+#' @param ... Additional arguments passed to gcm.test().
+#'
+#' @return A numeric vector of bootstrap p‑values from gcm.test.
+#'
+#' @examples
+#' \dontrun{
+#'   library(GeneralisedCovarianceMeasure)
+#'   set.seed(1)
+#'   n <- 100
+#'   x <- rnorm(n)
+#'   y <- rnorm(n)
+#'   z <- data.frame(Z1 = rnorm(n), Z2 = runif(n))
+#'   p_vals <- bootstrappedCondIndTest_GCM(x, y, z, n_boot = 500, sample_size = n)
+#'   hist(p_vals, main = "Bootstrapped gcm.test p-values", xlab = "p-value")
+#' }
+bootstrappedCondIndTest_GCM <- function(x, y, z, 
+                                        n_boot = 500, 
+                                        sample_size = length(x), 
+                                        verbose = FALSE, 
+                                        ...) {
+  # Check that x and y have the same length.
+  if (length(x) != length(y)) {
+    stop("x and y must be of the same length")
+  }
+  
+  # Ensure that the number of rows in z matches the length of x.
+  if (nrow(as.matrix(z)) != length(x)) {
+    stop("The number of rows in z must match the length of x and y")
+  }
+  
+  n <- length(x)
+  p_values <- numeric(n_boot)
+  
+  # Create a progress bar.
+  pb <- txtProgressBar(min = 0, max = n_boot, style = 3)
+  
+  for (i in 1:n_boot) {
+    # Draw bootstrap sample indices with replacement.
+    boot_idx <- sample(1:n, sample_size, replace = TRUE)
+    
+    boot_x <- x[boot_idx]
+    boot_y <- y[boot_idx]
+    boot_z <- as.data.frame(as.matrix(z)[boot_idx, , drop = FALSE])
+    
+    # Call gcm.test() with the supplied extra parameters.
+    result <- tryCatch({
+      gcm.test(boot_x, boot_y, boot_z, ...)
+    }, error = function(e) {
+      if (verbose) message("Error in gcm.test on iteration ", i, ": ", e$message)
+      return(list(p.value = NA))
+    })
+    
+    p_val <- result$p.value
+    if (is.null(p_val) || length(p_val) == 0) p_val <- NA
+    p_values[i] <- p_val
+    
+    setTxtProgressBar(pb, i)
+  }
+  
+  close(pb)
+  return(p_values)
+}
+
+# Make sure you have CondIndTests installed:
+# install.packages("CondIndTests")
+library(CondIndTests)
+
+#' Bootstrapped Conditional Independence Test using CondIndTest
+#'
+#' This function performs a bootstrapped conditional independence test using
+#' CondIndTest from the CondIndTests package. It resamples the data (with replacement)
+#' and, for each bootstrap iteration, calls CondIndTest with the specified settings.
+#' The p‑values are collected and returned. The function uses a progress bar to show progress.
+#'
+#' @param x A numeric vector.
+#' @param y A numeric vector.
+#' @param z A matrix or dataframe of conditioning variables (one row per observation).
+#' @param n_boot The number of bootstrap iterations (default is 500).
+#' @param sample_size The number of observations to sample in each bootstrap iteration (default is length(x)).
+#' @param method The method to use in CondIndTest (default is "KCI").
+#' @param alpha Significance level for the test (default is 0.05).
+#' @param parsMethod A list of parameters for the kernel hyperparameter selection in CondIndTest (default is an empty list).
+#' @param verbose A logical flag passed to CondIndTest (default is FALSE).
+#'
+#' @return A numeric vector of bootstrap p‑values from CondIndTest.
+#'
+#' @examples
+#' \dontrun{
+#'   set.seed(1)
+#'   n <- 100
+#'   Z <- rnorm(n)
+#'   X <- 4 + 2 * Z + rnorm(n)
+#'   Y <- 3 * X^2 + Z + rnorm(n)
+#'   # In these data X and Y are NOT conditionally independent given Z.
+#'   p_vals <- bootstrappedCondIndTest_CIT(X, Y, Z, n_boot = 500, sample_size = n)
+#'   cat("Bootstrapped p-values:\n")
+#'   print(p_vals)
+#' }
+bootstrappedCondIndTest_CIT <- function(x, y, z, 
+                                        n_boot = 500, 
+                                        sample_size = length(x),
+                                        method = "KCI", 
+                                        alpha = 0.05, 
+                                        parsMethod = list(), 
+                                        verbose = FALSE) {
+  # Check that x and y have the same length.
+  if (length(x) != length(y)) {
+    stop("x and y must be of the same length")
+  }
+  # Ensure that the number of rows in z matches the length of x.
+  if (nrow(as.matrix(z)) != length(x)) {
+    stop("The number of rows in z must match the length of x and y")
+  }
+  
+  n <- length(x)
+  p_values <- numeric(n_boot)
+  
+  # Create a progress bar.
+  pb <- txtProgressBar(min = 0, max = n_boot, style = 3)
+  
+  for (i in 1:n_boot) {
+    # Draw bootstrap sample indices with replacement.
+    boot_idx <- sample(1:n, sample_size, replace = TRUE)
+    boot_x <- x[boot_idx]
+    boot_y <- y[boot_idx]
+    boot_z <- as.data.frame(as.matrix(z)[boot_idx, , drop = FALSE])
+    
+    # Call CondIndTest with the specified settings.
+    result <- tryCatch({
+      CondIndTest(boot_x, boot_y, boot_z, 
+                  method = method, 
+                  alpha = alpha, 
+                  parsMethod = parsMethod, 
+                  verbose = verbose)
+    }, error = function(e) {
+      message("Error in CondIndTest on iteration ", i, ": ", e$message)
+      return(list(pvalue = NA))
+    })
+    
+    # Extract the p-value (if missing, assign NA)
+    p_val <- result$pvalue
+    if (is.null(p_val) || length(p_val) == 0) {
+      p_val <- NA
+    }
+    p_values[i] <- p_val
+    
+    # Update progress bar.
+    setTxtProgressBar(pb, i)
+  }
+  
+  close(pb)
   return(p_values)
 }

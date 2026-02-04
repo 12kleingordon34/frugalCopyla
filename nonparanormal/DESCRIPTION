@@ -1,0 +1,44 @@
+Package: nonparanormal
+Title: Nonparanormal Approximation for Frugal Causal Simulation
+Version: 0.1.0
+Authors@R: c(
+    person("Daniel", "de Vassimon Manela", email = "danielmanela@gmail.com", role = c("aut", "cre")),
+    person("Xi", "Lin", role = "aut"),
+    person("Chase", "Mathis", role = "aut"),
+    person("Robin J.", "Evans", role = "aut")
+    )
+Description: Implements copula-based methods for causal inference using
+    nonparanormal approximation. Provides tools for simulating from marginal
+    structural models (MSMs) with exact causal effects by combining Bayesian
+    Networks with Pair Copula Constructions (PCCs). Enables "frugal
+    parameterization" where causal margins are explicitly specified.
+License: MIT + file LICENSE
+Encoding: UTF-8
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.1
+Depends:
+    R (>= 4.0.0)
+Imports:
+    copula,
+    VineCopula,
+    ppcor,
+    stats,
+    utils
+Suggests:
+    bnlearn,
+    CondIndTests,
+    future,
+    future.apply,
+    GeneralisedCovarianceMeasure,
+    ggplot2,
+    gridExtra,
+    knitr,
+    logger,
+    rmarkdown,
+    testthat (>= 3.0.0),
+    tidyverse,
+    yaml
+Config/testthat/edition: 3
+VignetteBuilder: knitr
+URL: https://github.com/your-org/frugalCopyla
+BugReports: https://github.com/your-org/frugalCopyla/issues

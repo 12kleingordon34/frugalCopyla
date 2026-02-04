@@ -1,0 +1,49 @@
+# R package build artifacts
+*.Rcheck/
+*.tar.gz
+*.Rproj.user
+
+# renv artifacts (track renv.lock but not library)
+renv/library/
+renv/local/
+renv/cellar/
+renv/staging/
+renv/sandbox/
+.Rprofile.bak
+
+# R history and environment
+.Rhistory
+.RData
+.Ruserdata
+*.RDS
+*.rds
+
+# Experiment results (track structure but not data)
+results/raw/*
+results/processed/*
+results/figures/*
+!results/.gitkeep
+!results/raw/.gitkeep
+!results/processed/.gitkeep
+!results/figures/.gitkeep
+
+# Logs
+*.log
+logs/
+
+# Test artifacts
+tests/testthat/_snaps/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# IDE files
+.idea/
+*.swp
+*.swo
+*~
+
+# Temporary files
+tmp/
+temp/
