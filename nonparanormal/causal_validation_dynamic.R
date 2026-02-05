@@ -22,6 +22,7 @@
 
 library(tidyverse)
 library(ggplot2)
+library(ppcor)
 
 # Source the nonparanormal functions
 source("nonparanormal.R")
@@ -324,6 +325,9 @@ run_single_dynamic_simulation <- function(sim_id, n = N_SAMPLES, verbose = FALSE
   # AIPW estimate
   aipw_result <- compute_aipw_dynamic(data$Y2, data$X2, data$Z2, data$Y1, ps_X2_hat)
 
+  # Markov property test
+  markov_result <- test_markov_property(data)
+
   results <- data.frame(
     sim_id = sim_id,
     n = n,
@@ -332,6 +336,10 @@ run_single_dynamic_simulation <- function(sim_id, n = N_SAMPLES, verbose = FALSE
     ipw_ate = ipw_result$ate,
     gcomp_ate = gcomp_result$ate,
     aipw_ate = aipw_result$ate,
+    # Markov test (partial correlation)
+    pcor_Z1 = markov_result$pcor_Z1_estimate,
+    pcor_Z1_z = markov_result$pcor_Z1_statistic,
+    pcor_Z1_p = markov_result$pcor_Z1_pvalue,
     # Additional info
     prop_treated_X2 = mean(data$X2),
     mean_ps_X2 = mean(ps_X2_hat),
@@ -340,9 +348,9 @@ run_single_dynamic_simulation <- function(sim_id, n = N_SAMPLES, verbose = FALSE
   )
 
   if (verbose) {
-    cat(sprintf("Sim %d: True=%.3f, Naive=%.3f, IPW=%.3f, GComp=%.3f, AIPW=%.3f\n",
+    cat(sprintf("Sim %d: True=%.3f, Naive=%.3f, IPW=%.3f, GComp=%.3f, AIPW=%.3f | Markov p=%.3f\n",
                 sim_id, TRUE_ATE_X2, naive_ate, ipw_result$ate,
-                gcomp_result$ate, aipw_result$ate))
+                gcomp_result$ate, aipw_result$ate, markov_result$pcor_Z1_pvalue))
   }
 
   return(results)
@@ -359,35 +367,24 @@ run_single_dynamic_simulation <- function(sim_id, n = N_SAMPLES, verbose = FALSE
 #' of Z1 given (Z2, X2, Y1). This tests whether the nonparanormal approximation
 #' preserves the correct conditional independence structure.
 #'
-#' @param n_samples Sample size
-#' @param seed Random seed
+#' Uses ppcor::pcor.test for consistency with the longitudinal validation.
+#'
+#' @param data Data list from generate_dynamic_data
 #'
 #' @return List with test results
-test_markov_property <- function(n_samples = 5000, seed = 999) {
-  data <- generate_dynamic_data(n_samples, seed)
-
+test_markov_property <- function(data) {
   # Test: Y2 ⊥ Z1 | Z2, X2, Y1
-  # If the Markov property holds, the partial correlation should be ~0
-
-  # Fit linear model: Y2 ~ Z1 + Z2 + X2 + Y1
-  full_model <- lm(data$Y2 ~ scale(data$Z1) + scale(data$Z2) + data$X2 + scale(data$Y1))
-
-  # The coefficient on Z1 should be approximately 0
-  z1_coef <- coef(full_model)["scale(data$Z1)"]
-  z1_se <- summary(full_model)$coefficients["scale(data$Z1)", "Std. Error"]
-  z1_pvalue <- summary(full_model)$coefficients["scale(data$Z1)", "Pr(>|t|)"]
-
-  # Also compute partial correlation
-  residuals_Y2 <- lm(data$Y2 ~ scale(data$Z2) + data$X2 + scale(data$Y1))$residuals
-  residuals_Z1 <- lm(scale(data$Z1) ~ scale(data$Z2) + data$X2 + scale(data$Y1))$residuals
-  partial_cor <- cor(residuals_Y2, residuals_Z1)
+  # Using partial correlation (consistent with longitudinal script)
+  pcor_Z1 <- ppcor::pcor.test(
+    data$Y2, data$Z1,
+    cbind(data$Z2, data$X2, data$Y1)
+  )
 
   return(list(
-    z1_coefficient = z1_coef,
-    z1_se = z1_se,
-    z1_pvalue = z1_pvalue,
-    partial_correlation = partial_cor,
-    markov_holds = z1_pvalue > 0.05  # Fail to reject => Markov property holds
+    pcor_Z1_estimate = pcor_Z1$estimate,
+    pcor_Z1_statistic = pcor_Z1$statistic,
+    pcor_Z1_pvalue = pcor_Z1$p.value,
+    markov_holds = pcor_Z1$p.value > 0.05  # Fail to reject => Markov property holds
   ))
 }
 
@@ -406,12 +403,13 @@ cat(sprintf("Dynamic causal margin: E[Y2|do(X2), Y1] = %.1f + %.1f*X2 + %.1f*Y1\
             GAMMA_Y2_0, GAMMA_Y2_X2, GAMMA_Y2_Y1))
 cat("=============================================================================\n\n")
 
-# First, test Markov property
-cat("Testing Markov property (Y2 ⊥ Z1 | Z2, X2, Y1)...\n")
-markov_test <- test_markov_property(n_samples = 10000, seed = 888)
-cat(sprintf("  Z1 coefficient: %.4f (SE: %.4f, p = %.4f)\n",
-            markov_test$z1_coefficient, markov_test$z1_se, markov_test$z1_pvalue))
-cat(sprintf("  Partial correlation: %.4f\n", markov_test$partial_correlation))
+# First, test Markov property on a single large dataset
+cat("Testing Markov property (Y2 ⊥ Z1 | Z2, X2, Y1) on single large dataset...\n")
+test_data <- generate_dynamic_data(10000, seed = 888)
+markov_test <- test_markov_property(test_data)
+cat(sprintf("  Partial correlation: %.4f (z = %.2f, p = %.4f)\n",
+            markov_test$pcor_Z1_estimate, markov_test$pcor_Z1_statistic,
+            markov_test$pcor_Z1_pvalue))
 cat(sprintf("  Markov property: %s\n\n",
             ifelse(markov_test$markov_holds, "HOLDS (p > 0.05)", "VIOLATED")))
 
@@ -495,6 +493,36 @@ cat(sprintf("AIPW:  t = %.3f, p = %.4f, 95%% CI = [%.4f, %.4f]\n",
             aipw_ttest$conf.int[1], aipw_ttest$conf.int[2]))
 
 # =============================================================================
+# Markov Property Summary
+# =============================================================================
+
+cat("\n")
+cat("Markov Property Tests (across simulations):\n")
+cat("--------------------------------------------\n")
+
+markov_summary <- results_df %>%
+  summarise(
+    mean_pcor_Z1 = mean(pcor_Z1),
+    sd_pcor_Z1 = sd(pcor_Z1),
+    mean_z_Z1 = mean(pcor_Z1_z),
+    mean_p_Z1 = mean(pcor_Z1_p),
+    sd_p_Z1 = sd(pcor_Z1_p)
+  )
+
+cat(sprintf("Y2 ⊥ Z1 | Z2, X2, Y1:\n"))
+cat(sprintf("  Mean partial corr: %.4f (SD: %.4f)\n",
+            markov_summary$mean_pcor_Z1, markov_summary$sd_pcor_Z1))
+cat(sprintf("  Mean z-statistic: %.2f\n", markov_summary$mean_z_Z1))
+cat(sprintf("  Mean p-value: %.3f (SD: %.3f)\n",
+            markov_summary$mean_p_Z1, markov_summary$sd_p_Z1))
+
+# KS test for uniformity of p-values
+ks_Z1 <- ks.test(results_df$pcor_Z1_p, "punif")
+
+cat(sprintf("\nKS test for uniformity of p-values:\n"))
+cat(sprintf("  Z1: p = %.3f\n", ks_Z1$p.value))
+
+# =============================================================================
 # Create Visualization
 # =============================================================================
 
@@ -551,6 +579,19 @@ p_density <- ggplot(plot_data, aes(x = estimate, fill = estimator, color = estim
   scale_fill_brewer(palette = "Set2") +
   scale_color_brewer(palette = "Set2")
 
+# Markov p-value histogram
+p_markov_Z1 <- ggplot(results_df, aes(x = pcor_Z1_p)) +
+  geom_histogram(bins = 20, fill = "steelblue", color = "white", alpha = 0.7) +
+  geom_hline(yintercept = N_SIMS / 20, linetype = "dashed", color = "red") +
+  labs(
+    x = "p-value",
+    y = "Frequency",
+    title = expression(paste("Markov test: ", Y[2], " ⊥ ", Z[1], " | ", Z[2], ", ", X[2], ", ", Y[1])),
+    subtitle = sprintf("KS test for uniformity: p = %.3f", ks_Z1$p.value)
+  ) +
+  theme_minimal() +
+  theme(plot.title = element_text(face = "bold", size = 12))
+
 # =============================================================================
 # Save Results
 # =============================================================================
@@ -563,6 +604,8 @@ ggsave("results/causal_validation_dynamic_boxplot.png", p_boxplot,
        width = 10, height = 6, dpi = 300)
 ggsave("results/causal_validation_dynamic_density.png", p_density,
        width = 10, height = 8, dpi = 300)
+ggsave("results/causal_validation_dynamic_markov_Z1.png", p_markov_Z1,
+       width = 8, height = 5, dpi = 300)
 
 write.csv(results_df, "results/causal_validation_dynamic_results.csv", row.names = FALSE)
 
@@ -578,6 +621,8 @@ summary_output <- list(
     rho_y2_y1 = RHO_Y2_Y1
   ),
   markov_test = markov_test,
+  markov_summary = markov_summary,
+  ks_tests = list(Z1_p = ks_Z1$p.value),
   summary_stats = summary_stats,
   hypothesis_tests = list(
     ipw = list(t = ipw_ttest$statistic, p = ipw_ttest$p.value),
@@ -591,6 +636,7 @@ cat("\n=========================================================================
 cat("Results saved to ./results/\n")
 cat("  - causal_validation_dynamic_boxplot.png\n")
 cat("  - causal_validation_dynamic_density.png\n")
+cat("  - causal_validation_dynamic_markov_Z1.png\n")
 cat("  - causal_validation_dynamic_results.csv\n")
 cat("  - causal_validation_dynamic_summary.rds\n")
 cat("=============================================================================\n")
@@ -604,9 +650,10 @@ cat("===========================================================================
 cat("VERIFICATION CHECKLIST - DYNAMIC MODEL\n")
 cat("=============================================================================\n")
 
-# Check 1: Markov property holds
-cat(sprintf("[%s] Markov property Y2 ⊥ Z1 | Z2, X2, Y1 (p = %.3f)\n",
-            ifelse(markov_test$markov_holds, "PASS", "FAIL"), markov_test$z1_pvalue))
+# Check 1: Markov property holds (p-values uniform via KS test)
+markov_Z1_ok <- ks_Z1$p.value > 0.05
+cat(sprintf("[%s] Markov Y2 ⊥ Z1 | cond (KS p = %.3f)\n",
+            ifelse(markov_Z1_ok, "PASS", "WARN"), ks_Z1$p.value))
 
 # Check 2: Naive OLS biased
 naive_biased <- abs(summary_stats$naive_bias) > 0.05
@@ -639,3 +686,4 @@ cat("===========================================================================
 # Print plots
 print(p_boxplot)
 print(p_density)
+print(p_markov_Z1)
