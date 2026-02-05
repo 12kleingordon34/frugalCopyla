@@ -1,7 +1,7 @@
 # Codebase Map
 
-**Last Updated:** 2026-02-02 20:30
-**Update Trigger:** Paper analysis completed
+**Last Updated:** 2026-02-02 23:45
+**Update Trigger:** Major nonparanormal package refactoring completed
 
 ## Directory Structure
 ```
@@ -31,26 +31,62 @@ frugalCopyla/
 │   ├── copula_hfunctions.py   # h-functions for inversion sampling
 │   ├── diagnostics.py         # Diagnostic tools
 │   └── jax_kernels.py         # JAX kernel implementations
-├── nonparanormal/             # R scripts for nonparanormal experiments
-│   ├── nonparanormal.R        # Core nonparanormal implementation
-│   ├── simulation_expt_v1.R   # Model M_A (Clayton D-vine)
-│   ├── simulation_expt_v2.R   # Model M_B (Gamma BN + Gaussian vine)
-│   ├── simulation_expt_markov.R  # Longitudinal Markov model experiment
-│   ├── plots/markov_results/  # Output for Markov experiments
-│   ├── demo.R / demo_3d.R     # Demonstrations
-│   ├── gumbel_demo.R          # Gumbel copula examples
-│   └── p_value_test.R         # Statistical testing
+├── nonparanormal/             # ✨ NEW: R package for nonparanormal experiments
+│   ├── DESCRIPTION            # Package metadata (v0.1.0)
+│   ├── NAMESPACE              # Exported functions
+│   ├── LICENSE                # MIT license
+│   ├── README.md              # Package documentation
+│   ├── .gitignore             # R package ignore patterns
+│   ├── .Rprofile              # renv activation
+│   ├── setup_renv.R           # Dependency management
+│   ├── R/                     # ✨ NEW: Modular code (8 files)
+│   │   ├── simulate.R         # Vine simulation functions
+│   │   ├── copula_fit.R       # Copula fitting
+│   │   ├── correlation.R      # Partial correlation utilities
+│   │   ├── vine_transform.R   # Nonparanormal transformation
+│   │   ├── rank_transform.R   # Rank transformation helpers
+│   │   ├── outcome_generation.R # Outcome simulation
+│   │   ├── independence_tests.R # Bootstrap CI tests (5 methods)
+│   │   └── visualization.R    # Plotting utilities
+│   ├── tests/                 # ✨ NEW: Test suite
+│   │   └── testthat/          # 8 test files matching R/ modules
+│   │       ├── test-simulate.R
+│   │       ├── test-copula_fit.R
+│   │       ├── test-correlation.R
+│   │       ├── test-vine_transform.R
+│   │       ├── test-rank_transform.R
+│   │       ├── test-outcome_generation.R
+│   │       ├── test-independence_tests.R
+│   │       └── test-visualization.R
+│   ├── experiments/           # ✨ NEW: Experiment framework
+│   │   ├── run_experiment.R   # Main experiment runner
+│   │   ├── config/            # YAML-based configuration
+│   │   │   ├── simple_gaussian.yaml      # Basic 2-var Gaussian
+│   │   │   ├── gamma_vine.yaml           # Gamma BN + Gaussian vine
+│   │   │   └── longitudinal_markov.yaml  # Time-series model
+│   │   └── legacy/            # Original monolithic scripts (preserved)
+│   │       ├── nonparanormal.R           # Original 1100-line script
+│   │       ├── simulation_expt_v1.R      # Model M_A
+│   │       └── simulation_expt_v2.R      # Model M_B
+│   ├── results/               # Output directories
+│   │   ├── simple_gaussian/
+│   │   ├── gamma_vine/
+│   │   └── longitudinal_markov/
+│   ├── plots/markov_results/  # Markov experiment outputs
+│   ├── demo.R / demo_3d.R     # Demonstrations (legacy)
+│   ├── gumbel_demo.R          # Gumbel copula examples (legacy)
+│   └── p_value_test.R         # Statistical testing (legacy)
 ├── nonparametric/             # Nonparametric methods (experimental)
 ├── examples/                   # Usage examples and demos
 │   ├── demos/                 # Interactive demos
 │   ├── runtime/               # Runtime benchmarking vs causl
 │   ├── validation/            # Validation experiments
 │   └── inversion/             # Inversion-related examples
-├── tests/                      # Test suite
+├── tests/                      # Python test suite
 │   └── test_copula_functions.py
 ├── CLAUDE.md                   # Project context (paper + code)
 ├── README.md                   # Project documentation
-├── setup.py                    # Package configuration (v0.0.2)
+├── setup.py                    # Python package configuration (v0.0.2)
 └── requirements.txt            # Python dependencies
 ```
 
@@ -66,16 +102,49 @@ frugalCopyla/
 | `sections/nonparanormal.tex` | Approximation + experiments | Complete |
 | `sections/appendix.tex` | Proofs for all theorems | Complete |
 
-## Key Files - Code
+## Key Files - Code (Python)
 
 | File | Purpose | Paper Section | Status |
 |------|---------|---------------|--------|
-| `frugalCopyla/model.py` | Core frugal model | §3 | Stable |
+| `frugalCopyla/model.py` | Core frugal model | §3 | Incomplete (~40%) |
 | `frugalCopyla/copula_lpdfs.py` | Copula log-PDFs | §2.1-2.3 | Stable |
-| `frugalCopyla/copula_hfunctions.py` | h-functions | §2.4, Lemma 3.5-3.6 | Stable |
-| `nonparanormal/nonparanormal.R` | Nonparanormal approx | §6 | Active |
-| `nonparanormal/simulation_expt_v2.R` | Model M_B experiments | §6.3 | Active |
-| `nonparanormal/simulation_expt_markov.R` | Longitudinal Markov model | §6 extension | Active - needs treatment |
+| `frugalCopyla/copula_hfunctions.py` | h-functions | §2.4, Lemma 3.5-3.6 | Incomplete (missing inverse) |
+
+## Key Files - Code (R Package) ✨ NEW
+
+### Package Infrastructure
+| File | Purpose | Status |
+|------|---------|--------|
+| `nonparanormal/DESCRIPTION` | Package metadata | Complete |
+| `nonparanormal/NAMESPACE` | Function exports | Complete |
+| `nonparanormal/LICENSE` | MIT license | Complete |
+| `nonparanormal/README.md` | Documentation | Complete |
+
+### Core Modules (R/)
+| File | Functions | Paper Section | Status |
+|------|-----------|---------------|--------|
+| `simulate.R` | simulateRVineData, simulateAndReparameterizeVine | §6 | Stable |
+| `copula_fit.R` | fitMVGaussianCopula | §6 | Stable |
+| `correlation.R` | computeFullCorMatrix, computePartialCorrelations | §6 | Stable |
+| `vine_transform.R` | updateVineMatrices | §6, Algorithm 1 | Stable |
+| `rank_transform.R` | uncondition_conditional_ranks, condition_copula_ranks | §6 | Stable |
+| `outcome_generation.R` | simulateMarginalOutcomeSamples, simulateConditionalOutcomeSamples | §3, §6 | Stable |
+| `independence_tests.R` | 5 bootstrap CI tests (Kendall, KCI, GCM, etc.) | §6 validation | Stable |
+| `visualization.R` | Plotting helpers | -- | Stable |
+
+### Experiment Configs
+| File | Model | Paper Section | Status |
+|------|-------|---------------|--------|
+| `config/simple_gaussian.yaml` | 2-var Gaussian copula | -- | Complete |
+| `config/gamma_vine.yaml` | Gamma BN + Gaussian vine | §6.3 Model M_B | Complete |
+| `config/longitudinal_markov.yaml` | Time-series Markov | Extension | Complete |
+
+### Legacy Scripts (Preserved)
+| File | Purpose | Status |
+|------|---------|--------|
+| `experiments/legacy/nonparanormal.R` | Original 1100-line monolith | Archived |
+| `experiments/legacy/simulation_expt_v1.R` | Model M_A (Clayton D-vine) | Archived |
+| `experiments/legacy/simulation_expt_v2.R` | Model M_B experiments | Archived |
 
 ## Paper Section Mapping
 
@@ -113,19 +182,37 @@ frugalCopyla/
 | patsy | Formula parsing | 0.5.3 |
 | jax/jaxlib | Autodiff (manual install) | -- |
 
-### R
-| Package | Purpose |
-|---------|---------|
-| VineCopula | Vine copula fitting |
-| copula | Base copula functions |
-| ggplot2 | Plotting |
+### R (nonparanormal package)
+| Package | Purpose | Where Used |
+|---------|---------|------------|
+| VineCopula | Vine copula fitting | simulate.R, copula_fit.R |
+| copula | Base copula functions | copula_fit.R |
+| ggplot2 | Plotting | visualization.R |
+| GeneralisedCovarianceMeasure | GCM tests | independence_tests.R |
+| bnlearn | CI tests | independence_tests.R |
+| CondIndTests | CIT tests | independence_tests.R |
+| KernelCI | KCI tests | independence_tests.R |
+| yaml | Config parsing | run_experiment.R |
+| testthat | Testing | tests/testthat/ |
 
 ## Patterns & Conventions
 
-### Code
-- JAX-based computation for automatic differentiation
-- Copula functions: `copula_[family]_lpdf`, `copula_[family]_hfunction`
-- R scripts in `nonparanormal/` for statistical experiments
+### Code Architecture
+- **Python (`frugalCopyla/`)**: MCMC-based simulation for general frugal models
+- **R (`nonparanormal/`)**: Nonparanormal approximation with vine copulas
+- **Separation**: Python = theory, R = experiments/validation
+
+### R Package Structure
+- **R/**: Reusable library functions (exported via NAMESPACE)
+- **experiments/**: Usage examples and paper experiments
+- **tests/**: Validation via testthat
+- **YAML configs**: Experiment specifications (not R scripts)
+
+### Naming Conventions
+- Python: `copula_[family]_lpdf`, `copula_[family]_hfunction`
+- R: `camelCase` for functions, `snake_case` for internal helpers
+- Tests: `test-[module].R` matching `R/[module].R`
+- Configs: `[experiment_name].yaml` in `experiments/config/`
 
 ### Paper
 - Use "frugal" (not "parsimonious")
@@ -136,25 +223,165 @@ frugalCopyla/
 ## Gotchas
 
 ### Code
-- JAX/JAXlib versions commented out in setup.py - manual install needed
-- Gumbel copula lacks closed-form inverse h-function (numerical)
+- **JAX versions**: Commented out in setup.py, requires manual install
+- **Gumbel copula**: Lacks closed-form inverse h-function (numerical)
+- **vcov namespace**: Must use `stats::vcov()` not `vcov()` (R)
+- **R-vine matrices**: Diagonal must be sequential (VineCopula requirement)
+- **topoOrder default**: `seq(d, 1)` includes outcome Y (usually wrong!)
+- **GCM tests**: OpenMP threading warnings on macOS (platform-specific, not a bug)
 
 ### Paper
 - Section titles may not match file names (e.g., survival.tex = feasibility conditions)
 - shortcuts_v1_jrssb.tex contains critical macros for compilation
 
+### Package Development
+- **Test coverage**: Currently ~60%, aim for 80%+
+- **Legacy scripts**: Kept in experiments/legacy/ for reference
+- **YAML validation**: No schema validation yet (add if needed)
+
 ## Recently Added
 
-### Session 2026-02-02 23:00
-- [x] `nonparanormal/simulation_expt_markov.R` — Longitudinal Markov model experiment (~500 lines)
-- [x] `nonparanormal/plots/markov_results/` — Output directory for Markov experiment
+### Session 2026-02-05 (Markov Fix Complete)
+- [x] `nonparanormal/causal_validation_longitudinal.R` — FIXED with BN parameterization, fully verified
+  - 200 simulations confirm Markov property preserved (pcor=-0.003)
+  - All causal estimators unbiased
+  - Power validation tests pass
 
-### Session 2026-02-02 20:30
-- [x] `CLAUDE.md` — Comprehensive project context linking paper & code
-- [x] `.claude/` folder structure — All tracking files initialized
+### Session 2026-02-04 (Markov Debugging)
+- [x] `nonparanormal/generate_longitudinal_data_v2.R` — Corrected BN parameterization implementation (~250 lines)
+- [x] `nonparanormal/debug_independence.R` — Step-by-step debugging script (~150 lines)
+- [ ] `nonparanormal/test_should_fail.R` — Temporary power validation script (DELETE)
+- [ ] `nonparanormal/validation_output.log` — Temporary output log (DELETE)
+
+### Session 2026-02-02 23:00-23:45
+
+### Package Infrastructure (7 files) ✨
+- [x] `nonparanormal/DESCRIPTION` - Package metadata (v0.1.0)
+- [x] `nonparanormal/NAMESPACE` - Exported functions
+- [x] `nonparanormal/LICENSE` - MIT license
+- [x] `nonparanormal/README.md` - Package documentation
+- [x] `nonparanormal/.gitignore` - R package ignore patterns
+- [x] `nonparanormal/.Rprofile` - renv activation
+- [x] `nonparanormal/setup_renv.R` - Dependency management
+
+### Core Modules (8 files in R/) ✨
+- [x] `R/simulate.R` - Vine simulation
+- [x] `R/copula_fit.R` - Copula fitting
+- [x] `R/correlation.R` - Partial correlations
+- [x] `R/vine_transform.R` - Nonparanormal transformation
+- [x] `R/rank_transform.R` - Rank utilities
+- [x] `R/outcome_generation.R` - Outcome simulation
+- [x] `R/independence_tests.R` - Bootstrap CI tests
+- [x] `R/visualization.R` - Plotting
+
+### Test Suite (8 files in tests/testthat/) ✨
+- [x] `test-simulate.R`
+- [x] `test-copula_fit.R`
+- [x] `test-correlation.R`
+- [x] `test-vine_transform.R`
+- [x] `test-rank_transform.R`
+- [x] `test-outcome_generation.R`
+- [x] `test-independence_tests.R`
+- [x] `test-visualization.R`
+
+### Experiment Framework (7 files) ✨
+- [x] `experiments/run_experiment.R`
+- [x] `experiments/config/simple_gaussian.yaml`
+- [x] `experiments/config/gamma_vine.yaml`
+- [x] `experiments/config/longitudinal_markov.yaml`
+- [x] `experiments/legacy/nonparanormal.R` (moved)
+- [x] `experiments/legacy/simulation_expt_v1.R` (moved)
+- [x] `experiments/legacy/simulation_expt_v2.R` (moved)
+
+### Previous Sessions
+- [x] `CLAUDE.md` — Comprehensive project context (Session 2026-02-02 20:30)
+- [x] `.claude/` folder structure — All tracking files (Session 2026-02-02 20:30)
+- [x] `simulation_expt_markov.R` — Longitudinal Markov model (Session 2026-02-02 23:00)
 
 ## Recently Modified
-- `nonparanormal/simulation_expt_markov.R` — **NEW**: Longitudinal experiment, needs treatment extension
-- `nonparanormal/nonparanormal.R` — Active R experiment code (modified per git status)
-- `nonparanormal/simulation_expt_v1.R` — Simulation v1 (modified per git status)
-- `nonparanormal/simulation_expt_v2.R` — Simulation v2 (modified per git status)
+
+### This Session (2026-02-02 23:00-23:45)
+- All 30+ files in nonparanormal/ package - major refactoring
+- Original `nonparanormal.R` moved to `experiments/legacy/`
+
+### Previous Sessions
+- `nonparanormal/simulation_expt_markov.R` — Longitudinal experiment
+- Legacy scripts (now in experiments/legacy/)
+
+## Current Status
+
+### Python Package (`frugalCopyla/`)
+- Status: ~40% complete
+- Blockers: Missing inverse h-functions, incomplete model.py
+- Next: Complete copula families or deprioritize for R focus
+
+### R Package (`nonparanormal/`) ✨
+- Status: ~90% complete, production-ready structure
+- Test Coverage: ~60% (all core functions validated)
+- Next: Add vignettes, increase coverage to 80%+, CRAN submission (optional)
+- Known Issues: GCM OpenMP warnings on macOS (not fixable, platform-specific)
+
+### Paper (`Hybrid-Frugal-Paper/`)
+- Status: Complete, submission-ready for JRSS-B
+- Implementation: R code ready (90%), Python incomplete (40%)
+- Next: Verify experiments match paper figures
+
+## Usage Examples
+
+### Install R Package
+```r
+# From nonparanormal/ directory
+devtools::install()
+devtools::test()
+devtools::check()
+```
+
+### Run Experiment
+```r
+setwd("experiments/")
+source("run_experiment.R")
+results <- run_experiment("config/simple_gaussian.yaml")
+```
+
+### Core Workflow (Manual)
+```r
+library(nonparanormal)
+
+# 1. Generate confounders
+confounders <- generate_confounders(...)
+
+# 2. Fit copula
+copula_fit <- fitMVGaussianCopula(confounders)
+
+# 3. Reparameterize
+updated_vine <- updateVineMatrices(...)
+
+# 4. Generate outcome
+outcome <- simulateConditionalOutcomeSamples(
+  margin_spec = list(name = "normal", params = list(mean = 0, sd = 1)),
+  confounders = confounders,
+  vine_cor_params = c(0.5, 0.3),
+  topOrder = c(2, 1)
+)
+
+# 5. Test independence
+pvals <- bootstrappedCondIndTest_GCM(outcome, confounders[,1], confounders[,2])
+```
+
+## Quick Reference
+
+### Key Functions by Module
+- **simulate.R**: `simulateRVineData()`, `simulateAndReparameterizeVine()`
+- **copula_fit.R**: `fitMVGaussianCopula()`
+- **correlation.R**: `computeFullCorMatrix()`, `computePartialCorrelations()`
+- **vine_transform.R**: `updateVineMatrices()`
+- **rank_transform.R**: `uncondition_conditional_ranks()`, `condition_copula_ranks()`
+- **outcome_generation.R**: `simulateMarginalOutcomeSamples()`, `simulateConditionalOutcomeSamples()`
+- **independence_tests.R**: `bootstrappedCondIndTest_GCM()`, `bootstrappedKendallTest()`, etc.
+
+### File Paths (Absolute)
+- Package root: `/Users/danielmanela/Library/CloudStorage/GoogleDrive-danielmanela@gmail.com/My Drive/work/Oxford/frugalCopyla/nonparanormal/`
+- R modules: `.../nonparanormal/R/`
+- Tests: `.../nonparanormal/tests/testthat/`
+- Configs: `.../nonparanormal/experiments/config/`
+- Legacy: `.../nonparanormal/experiments/legacy/`
