@@ -6,239 +6,48 @@
 - frugalCopyla is a Python package for copula-based causal inference
 - Uses JAX/NumPyro for probabilistic computation
 - Has companion R scripts in nonparanormal/ for experiments
+- Paper (Hybrid-Frugal-Paper) is submission-ready, focuses on R implementation
 
 ## Recurring Issues
-- [To be populated when issues recur]
-
-## Effective Approaches
-- [To be populated as effective patterns emerge]
-
-## Key Decisions Summary
-- [To be populated from decisions.md]
-
----
-
-## Update: 2026-02-03
-
-### Critical Insight: Two Approaches to Nonparanormal Approximation
-
-There are TWO distinct approaches to nonparanormal approximation with fundamentally different trade-offs. This distinction is critical for the paper and implementation.
-
-#### Approach A: Regenerate from Gaussian Copula
-**Workflow:**
-1. Observe Z from true DGP (e.g., Gamma BN)
-2. Fit Gaussian copula to Z → get correlation matrix R
-3. Sample FRESH U from Gaussian copula with correlation R
-4. These U's are uniform by construction (from Gaussian copula)
-5. Apply Z_i = qgamma(U_i^marginal, shape_i, scale_i)
-
-**Properties:**
-- Marginal distributions: ✅ Exact (via quantile transform)
-- Dependency structure (CI/Markov): ✅ Exact (from Gaussian copula)
-- Dependency metrics (tails, higher moments): ❌ Approximated (Gaussian)
-- Conditional distributions Z_j|Z_k: Gaussian copula conditionals
-- Conditional ranks: ✅ Uniform (as required by copula theory)
-
-#### Approach B: Preserve Original Data
-**Workflow:**
-1. Observe Z from true DGP
-2. Fit Gaussian copula to Z → get R
-3. Keep original Z values (don't regenerate)
-4. Use Gaussian copula formulas with original (non-uniform) conditional ranks
-5. Only generate Y using these ranks
-
-**Properties:**
-- Marginal distributions: ✅ Exact (original data)
-- Dependency structure (CI/Markov): ⚠️ Small violations (~0.02 partial correlations)
-- Dependency metrics (tails, higher moments): ✅ Preserved from true DGP
-- Conditional distributions Z_j|Z_k: Original DGP conditionals preserved
-- Conditional ranks: ❌ Non-uniform (from true copula, not Gaussian)
-
-#### Trade-off Summary
-
-| Property | Approach A (Regenerate) | Approach B (Preserve) |
-|----------|------------------------|----------------------|
-| Marginals | Exact | Exact |
-| Markov/CI structure | ✅ Exact | ⚠️ ~0.02 violations |
-| Tail dependence | ❌ Gaussian approx | ✅ Preserved |
-| Conditional Z|Z shapes | Gaussian copula | Original DGP |
-| Conditional ranks | Uniform | Non-uniform |
-
-**Key insight:** Both preserve the causal margin p(Y|do(X)). The choice depends on what you're willing to approximate:
-- **Approach A:** Approximate Z-Z dependence details (tails, conditional shapes)
-- **Approach B:** Approximate Y-Z conditional independence structure (small Markov violations)
-
-#### Why This Matters
-
-**Conditional ranks from Gaussian copula ARE uniform when sampling fresh:**
-- When you generate U_{j|pa(j)} from a Gaussian copula, they are uniform by construction
-- This is because the copula's h-function maps the conditional distribution to [0,1]
-- Using non-Gaussian conditional ranks with Gaussian h-functions creates inconsistencies
-
-**The previous implementation mistake (longitudinal_fixed.R):**
-- Was using Approach B: original ranks + Gaussian unconditioning
-- This created a mismatch: non-Gaussian conditional ranks being "unconditioned" with Gaussian formulas
-- Result: ~0.02 partial correlations (statistically significant violations)
-
-**The correct implementation (Approach A):**
-- Regenerate ranks fresh from the Gaussian copula
-- Gives uniform conditional ranks consistent with Gaussian assumptions
-- Result: partial correlations ~0.005 (statistically zero)
-
-### Experimental Evidence
-
-With N=30,000 samples:
-
-| Test | Approach B (Original) | Approach A (Regenerate) |
-|------|---------------------|---------------------------|
-| ρ(Y_2, Z1^1 \| Z^2) | -0.026 (z=-4.56)* | -0.006 (z=-1.07) |
-| ρ(Y_2, Z2^1 \| Z^2) | -0.016 (z=-2.70)* | -0.006 (z=-1.01) |
-| ρ(Y_3, Z1^2 \| Z^3) | -0.022 (z=-3.75)* | -0.004 (z=-0.68) |
-| ρ(Y_3, Z2^2 \| Z^3) | -0.009 (z=-1.57) | -0.002 (z=-0.40) |
-
-*Statistically significant (|z| > 1.96)
-
-Approach A reduces violations by ~4x and eliminates statistical significance.
-
-### Implications for Paper Section 6
-
-The paper should explicitly state which approach is being used and why:
-
-1. **For Section 6.3 experiments:** Likely using Approach A to demonstrate Markov preservation
-2. **Statement about "linear Gaussian SEM for DGP":** This is Approach A - regenerating from Gaussian
-3. **Key clarification needed:** The nonparanormal approximation approximates the Z-Z copula, NOT the Y-Z copula
-
-### Related Implementation Files
-- `nonparanormal/R/dag.R` - DAG utility functions
-- `nonparanormal/R/rank_transform.R` - `uncondition_conditional_ranks()` with DAG-aware parents
-- `nonparanormal/longitudinal_fixed.R` - Experiment comparing approaches
-- `nonparanormal/R/simulate.R` - Core vine simulation
-
----
-
-### Critical Insight: Nonparanormal Approximation Trade-off (Old - Superseded)
-
-The nonparanormal approximation provides TWO distinct use cases with different trade-offs:
-
-#### Option 1: Approximate Covariate Interdependence
-- **What's preserved exactly:** Marginal distributions of covariates
-- **What's approximated:** Interdependence structure between covariates (via Gaussian copula)
-- **Use case:** When you have the exact marginal CDFs and want to model dependencies
-
-#### Option 2: Preserve Covariate Structure, Approximate Outcome Edges
-- **What's preserved exactly:** Both the marginal distributions AND the dependency structure between covariates
-- **What's approximated:** The dependence between outcomes (Y) and covariates (Z)
-- **Use case:** When the covariate model is known/observed and you're adding an outcome
-
-### Key Finding: Regenerating Conditional Ranks (Old - Superseded)
-
-When using nonparanormal approximation with a DAG structure:
-
-**Wrong approach (causes ~0.02 partial correlations):**
-1. Take conditional ranks U_{j|pa(j)} from original non-Gaussian model (e.g., Gamma BN)
-2. Try to "uncondition" them using Gaussian copula formulas
-3. Problem: Mismatch between true copula and Gaussian assumption
-
-**Correct approach (partial correlations ~0.005, statistically zero):**
-1. Observe Z values from any marginal distribution
-2. Compute empirical marginal ranks: U_j^marginal = rank(Z_j)/(n+1)
-3. Transform to Gaussian scale: X_j = Φ^{-1}(U_j^marginal)
-4. Compute correlation matrix R from Gaussianized data
-5. **Extract conditional ranks from Gaussian copula using DAG structure:**
-   - For root nodes: U_{j} = Φ(X_j)
-   - For non-roots: U_{j|pa(j)} = Φ((X_j - μ_{j|pa}) / σ_{j|pa})
-6. Use these Gaussian-derived conditional ranks for downstream generation
-
-This ensures the conditional ranks are consistent with both the Gaussian copula AND the DAG structure.
-
-### Implication for Paper
-
-The statement "by imposing a linear Gaussian SEM for the DGP of time-varying confounders, the Markov property can be imposed" is correct, but the implementation requires:
-1. Using the Gaussian copula correlation matrix computed from marginal ranks
-2. Extracting conditional ranks FROM the Gaussian copula structure (not from the original non-Gaussian model)
-3. The DAG structure must be respected when extracting these conditional ranks
-
-**Last Updated:** 2026-02-04
-
----
-
-## Update: 2026-02-04
-
-### From archived sessions (Feb 2-3):
-
-**Codebase Structure:**
-- Python package (`frugalCopyla/`) is ~40% complete - MCMC-based, missing inverse h-functions
-- R package (`nonparanormal/`) is production-ready - modular structure, 60% test coverage
-- Paper (`Hybrid-Frugal-Paper/`) is submission-ready, focuses on R implementation for experiments
-
-**R Package Refactoring Success:**
-- Transformed 1100-line monolith into 8 focused modules with test suite
-- YAML-based experiment framework enables reproducible validation
-- DAG-aware rank unconditioning critical for longitudinal models
-
-**Key Gotchas:**
+- JAX/JAXlib require manual installation due to version conflicts
+- GCM tests show OpenMP warnings on macOS (platform-specific, not a bug)
 - VineCopula R-vine matrices must have sequential diagonal
 - `topoOrder` default includes outcome Y (usually wrong for frugal models)
-- GCM tests show OpenMP warnings on macOS (platform-specific, not a bug)
-- JAX/JAXlib requires manual installation due to version conflicts
+
+## Effective Approaches
+- YAML-based experiment framework enables reproducible validation
+- DAG-aware rank unconditioning critical for longitudinal models
+- BN parameterization (independent ranks + conditional CDFs) works best for Bayesian network structures
+- Modular R package structure (8 focused modules) better than monolithic scripts
+
+## Key Decisions Summary
+- Use BN parameterization for validation experiments (not vine copula for Z-Z)
+- Copula used ONLY for Y-Z dependence, not Z-Z dependence in BN structures
+- Paper Section 6 focuses on R implementation (Python ~40% complete, deprioritized)
+- Context management with rotation keeps files lean (rotate at 5+ sessions)
 
 ---
 
-## Update: 2026-02-04 - Markov Property Debugging Session
+## Update: 2026-02-05 (Session Rotation)
 
-### Critical Design Error Identified
+### From archived sessions (Feb 3-4):
 
-**The Root Cause:**
-The longitudinal causal validation was incorrectly mixing copula approaches:
-1. Fitting a copula to the FULL variable set (Z_{t-1}, Z_t, Y_{t-1})
-2. Extracting conditional ranks U_{Z_j | pa(Z_j)} from this joint copula
-3. Then trying to use CONDITIONAL CDFs F(Z_j | pa(Z_j)) for transformation
+**Validation Experiment Design:**
+- Created three validation experiments: static, dynamic, longitudinal
+- All designed to test whether nonparanormal approximation preserves p(Y|do(X))
+- Key insight: X does NOT enter copula structure — affects Y only through causal margin
 
-**Why This Fails:**
-- Extracting conditional ranks U_{Z_j | pa(Z_j)} makes them INDEPENDENT of parent Q values by construction
-- Using conditional CDFs on independent ranks creates NO dependence at all
-- Result: Violated intended dependence structure, broke Markov property
+**DAG-Aware Rank Unconditioning:**
+- Fixed assumption that variables conditioned on ALL previous (D-vine)
+- Correct: variables conditioned only on their DAG parents
+- Required new DAG utility functions (dag.R with 47 tests)
+- Critical for longitudinal models with temporal structure
 
-### The Correct Approach: BN Parameterization (Option B)
-
-**For Z-Z dependencies (BN factorization):**
-1. Use INDEPENDENT conditional ranks (iid Uniform) for each Z_j
-2. Transform through CONDITIONAL CDFs: Z_j = F^{-1}_{Z_j|pa(Z_j)}(U_j; pa(Z_j))
-3. Dependence comes from the SHAPE parameters depending on parent values, NOT from correlated ranks
-
-**For Y-Z dependencies (copula):**
-1. Use Gaussian copula to encode Y's dependence on its conditioning set ONLY
-2. This requires marginal ranks for the conditioning variables
-
-**Key Insight:**
-With conditional marginals (BN parameterization), the Z-Z dependence is encoded in the CONDITIONAL CDFs themselves (shape parameters depend on parents), NOT in the copula structure. The copula is only needed for Y-Z dependence.
-
-### Implementation Files Created
-
-- `nonparanormal/generate_longitudinal_data_v2.R` - Corrected implementation using BN parameterization
-- `nonparanormal/debug_independence.R` - Step-by-step debugging script showing the error
-
-### Contrasting Approaches
-
-**Option A (Vine/Copula for Z-Z):**
-- Use correlated ranks + marginal CDFs
-- Dependence encoded in copula correlation structure
-- Works but requires more complex vine specification
-
-**Option B (BN for Z-Z):**
-- Use independent ranks + conditional CDFs
-- Dependence encoded in conditional CDF parameters
-- Simpler, more direct for Bayesian network structures
-- THIS IS THE CORRECT APPROACH for the validation experiments
-
-### Implications for Paper
-
-The validation experiments should:
-1. Use BN factorization for Z variables (independent ranks + conditional CDFs)
-2. Use Gaussian copula ONLY for linking Y to Z (after Z is fully generated)
-3. Make this distinction explicit in the paper text
-
-**Last Updated:** 2026-02-04
+**Two Approaches to Nonparanormal:**
+- Approach A (Regenerate): Fresh ranks from Gaussian copula → exact Markov/CI, approximate tail dependence
+- Approach B (Preserve): Keep original ranks → preserve tail dependence, ~0.02 Markov violations
+- Decision: Use Approach A for causal inference (exact Markov critical)
+- Paper should explicitly state which approach used
 
 ---
 
@@ -331,64 +140,143 @@ generate_bn_sample <- function(n) {
 
 ### Reference
 
-This algorithm is the "conditional ranks through conditional marginals" approach for Gaussian copula BNs. The key insight is that dependence comes from the conditional CDF parameters (which depend on parent values), NOT from correlated ranks
+This algorithm is the "conditional ranks through conditional marginals" approach for Gaussian copula BNs. The key insight is that dependence comes from the conditional CDF parameters (which depend on parent values), NOT from correlated ranks.
 
 ---
 
-## Update: 2026-02-05
+## Update: 2026-02-05 (Current Session)
 
-### Session Completed: Markov Property Fix Verified
+### Session Completed: Complete Paper Section 6 Validation
 
-**Major achievement:** Successfully fixed and validated the Markov property violations in longitudinal causal validation experiments.
+**Major achievement:** Completed all 4 phases of comprehensive Paper Section 6 update with all three validation experiments showing consistent unbiased ATE estimates.
 
-**Key Results (200 simulations, N=5,000):**
-- Markov property preserved: Mean partial correlation = -0.003 (vs 0.076 before fix)
-- KS test for p-value uniformity: p=0.928 (Z1), p=0.618 (Z2) - perfect uniformity
-- All causal estimators unbiased: IPW bias=0.0004, G-comp bias=0.002, AIPW bias=0.002
-- Chain structure verified through rank uniformity tests
+### Key Results Summary
 
-**Power validation confirmed:**
-- Tests correctly detect dependencies when conditioning variables omitted
-- Full conditioning: pcor ~0.005, p>0.4 (pass)
-- Omit Z1_t: pcor=0.078, p<0.0001 (correctly detected)
-- Omit Z2_t: pcor=0.093, p<0.0001 (correctly detected)
-- Omit Y_{t-1}: pcor=0.235, p<0.0001 (correctly detected)
-- Marginal: cor=0.461, p<0.0001 (correctly detected)
+**All Three Validation Experiments Pass:**
 
-**The Solution:**
-Replaced the old `generate_longitudinal_data()` function with BN parameterization approach:
-- Z variables use independent Uniform ranks (NOT extracted from joint copula)
-- Transform through conditional CDFs with parent-dependent parameters
-- Y uses Gaussian copula for dependence on Z (after Z is fully generated)
+| Model | Markov Test | IPW Bias | AIPW Bias | Status |
+|-------|-------------|----------|-----------|--------|
+| Static | N/A | 0.002 (p=0.295) | 0.001 (p=0.786) | ✅ Unbiased |
+| Dynamic | KS p=0.485 | 0.001 (p=0.547) | 0.000 (p=0.827) | ✅ Unbiased |
+| Longitudinal | KS p=0.928/0.618 | 0.0004 | 0.002 | ✅ Unbiased |
 
-**Key Implementation Pattern:**
+### Paper Text Updates
+
+**Added Remark 1 after Algorithm 1:**
+- Clarifies distinction between BN factorization (for Z-Z dependencies) and copula (for Y-Z dependencies)
+- Explains that Gaussian copula imposed ONLY for Y-Z dependence
+- Critical for understanding what is being approximated
+
+**Section 6.5 Clarification:**
+- Replaced vague "Gaussian copula approximation" with explicit BN/copula terminology
+- Added "Sampling Mechanism" paragraph explaining independent ranks + conditional CDFs
+- Makes the BN parameterization approach explicit
+
+**Dynamic Model Validation Added:**
+- Complete subsubsection with DAG, Markov test results, ATE table
+- Complements static and longitudinal validation
+- Shows consistency across temporal structures
+
+**Appendix Fix:**
+- Changed "GCM test" → "partial correlation test" in Section app:ci-pvalues
+- Note: Section 6.3 kept GCM references (those were actual GCM tests, not partial correlation)
+
+### Code Upgrade
+
+**Dynamic validation script upgraded:**
+- Uses `ppcor::pcor.test` (matching longitudinal pattern)
+- Integrated Markov test into main simulation loop
+- Added KS uniformity test for p-values
+- Added p-value histogram output
+
+### Key Implementation Pattern
+
+**For validation experiments, use BN parameterization:**
+
 ```r
-# CORRECT: Independent ranks + conditional marginals
+# Z variables: Independent ranks + conditional CDFs
 U_Z2 <- runif(n)  # Independent!
 shape_Z2 <- BASE_SHAPE + BETA * Z1  # Parameter depends on parent VALUE
 Z2 <- qgamma(U_Z2, shape = shape_Z2, scale = SCALE)
+
+# Y variable: Gaussian copula for dependence on Z
+# (after Z is fully generated with marginal ranks)
 ```
 
-**Verification Process:**
-1. Quick test with N=10,000 showed immediate improvement (pcor ~0.005 vs 0.076)
-2. Full simulation with 200 reps confirmed statistical validity
-3. Power tests verified the tests can detect real dependencies
-4. Comparison with ChatGPT confirmed our shortcut is mathematically equivalent to canonical Gaussian BN algorithm
+**Critical distinction:**
+- Z-Z dependence: Encoded in conditional CDF parameters (BN approach)
+- Y-Z dependence: Encoded in Gaussian copula (copula approach)
+- NEVER extract conditional ranks from copula and use with conditional CDFs
 
-**Files Successfully Modified:**
-- `nonparanormal/causal_validation_longitudinal.R` - Replaced function with corrected implementation
+### Validation Confirms Theory
 
-**Files for Cleanup:**
-- `nonparanormal/test_should_fail.R` - Temporary power validation script
-- `nonparanormal/validation_output.log` - Temporary output log
+**What was validated:**
+1. ✅ Nonparanormal approximation preserves causal margins p(Y|do(X))
+2. ✅ BN parameterization preserves Markov properties (KS tests pass)
+3. ✅ IPW and AIPW estimators are unbiased across all temporal structures
+4. ✅ Results consistent across static, dynamic, and longitudinal models
 
-**Next Steps Remaining:**
-- Update paper text to clarify BN parameterization approach (Section 6.5)
-- Check static and dynamic validation experiments for consistency
-- Consider methodological note explaining the two approaches (BN vs vine)
-- Commit all changes
+**Paper contribution confirmed:**
+- Frugal parameterization allows exact specification of p(Y|do(X))
+- Nonparanormal approximation is viable for feasible implementation
+- Both structural (Markov) and causal (ATE) quantities preserved
 
-**Key Lesson Learned:**
-When using conditional CDFs F(Z_j | pa(j)), you MUST use independent ranks. The dependence comes from the conditional CDF parameters (which depend on parent values), NOT from correlated ranks. Mixing conditional ranks from a copula with conditional CDFs creates no dependence and violates the intended structure.
+### Files Successfully Modified
 
-**Last Updated:** 2026-02-05
+**Paper:**
+- `Hybrid-Frugal-Paper/sections/nonparanormal.tex` — All text updates
+- `Hybrid-Frugal-Paper/sections/appendix.tex` — GCM→partial correlation fix
+- Updated histogram plots
+
+**Code:**
+- `nonparanormal/causal_validation_dynamic.R` — ppcor upgrade
+
+**Documentation:**
+- `.claude/scratchpad.md` — Rotated (8→5 sessions)
+- `.claude/plan.md` — Marked complete
+- `.claude/handoff.md` — Complete session summary
+- `.claude/archive/scratchpad-2026-02.md` — Archive updated
+
+### Commit
+- **ddadae4** — All changes committed and pushed to origin/inversion
+- Paper Section 6 now submission-ready
+
+### Context Management
+
+**Rotation performed:**
+- Scratchpad had 8 sessions (> 5 threshold)
+- Kept last 5 sessions in active scratchpad.md
+- Moved older sessions to archive/scratchpad-2026-02.md
+- Extracted and documented key learnings above
+
+**Other tracking files:**
+- Errors.md: Still empty (no errors to log)
+- Decisions.md: 4 entries (< 50 threshold, no rotation needed)
+- References.md: Not checked (likely low, no rotation needed)
+
+### Next Steps (Optional)
+
+1. Fix 7 pre-existing minor paper issues (out of scope for this session)
+2. Final submission preparation
+3. Consider methodological note comparing BN vs vine approaches
+
+### Lessons Learned This Session
+
+**Paper Writing:**
+- Explicit terminology prevents confusion (BN factorization vs copula)
+- Remarks after algorithms are valuable for clarifying design choices
+- Dynamic validation complements static and longitudinal nicely
+
+**Experimental Design:**
+- Consistency across experiments builds confidence
+- KS tests for p-value uniformity are good validation
+- Having three temporal structures (static/dynamic/longitudinal) shows generality
+
+**Context Management:**
+- Rotation at 8 sessions keeps scratchpad manageable
+- Extracting learnings before archiving preserves knowledge
+- Handoff documents should be immediately actionable
+
+**Last Updated:** 2026-02-05 16:30
+
+---

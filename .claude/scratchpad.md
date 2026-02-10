@@ -1,5 +1,64 @@
 # Scratchpad
 
+## Session: 2026-02-05 (Current) - Paper Section 6 Updates + All Validation Complete
+
+### Current Task
+Complete Paper Section 6 revisions with all three validation experiments (static, dynamic, longitudinal) showing consistent unbiased ATE estimates.
+
+### Key Accomplishments
+
+**All 4 phases of plan completed and committed (ddadae4), pushed to origin/inversion:**
+
+**Phase 1: Paper Text Edits**
+- Added Remark 1 after Algorithm 1 explaining BN vs copula distinction (rem:bn-vs-copula)
+- Clarified Section 6.5 - replaced vague "Gaussian copula approximation" with explicit BN/copula description
+- Added "Sampling Mechanism" paragraph explaining independent ranks + conditional CDFs
+- Added Dynamic Model Validation subsubsection with DAG, Markov test results, ATE table
+- Fixed appendix: GCM → partial correlation throughout app:ci-pvalues section
+
+**Phase 2: Dynamic Script Upgrade**
+- Added library(ppcor) import to causal_validation_dynamic.R
+- Rewrote test_markov_property() to use ppcor::pcor.test (matching longitudinal pattern)
+- Integrated Markov test into run_single_dynamic_simulation()
+- Added KS uniformity test, p-value histogram, updated verification checklist
+
+**Phase 3: Re-ran All Three Experiments**
+- Static: IPW unbiased (p=0.295), AIPW unbiased (p=0.786)
+- Dynamic: All pass, KS p=0.485, mean pcor=-0.0001
+- Longitudinal: KS improved to 0.928/0.618 (from previous 0.044/0.805)
+
+**Phase 4: Verification**
+- Code reviewer identified minor issues; fixed KS p-value in dynamic section and Z^{t-1} notation in appendix
+- Pre-existing issues noted but out of scope
+
+### Validation Results Summary
+
+| Model | Markov Test | IPW Bias | AIPW Bias | Status |
+|-------|-------------|----------|-----------|--------|
+| Static | N/A | 0.002 (p=0.295) | 0.001 (p=0.786) | ✅ Unbiased |
+| Dynamic | KS p=0.485 | 0.001 (p=0.547) | 0.000 (p=0.827) | ✅ Unbiased |
+| Longitudinal | KS p=0.928/0.618 | 0.0004 | 0.002 | ✅ Unbiased |
+
+### Files Modified
+- `Hybrid-Frugal-Paper/sections/nonparanormal.tex` - All text updates (Remark, Section 6.5, dynamic subsection)
+- `Hybrid-Frugal-Paper/sections/appendix.tex` - GCM→partial correlation fix
+- `nonparanormal/causal_validation_dynamic.R` - ppcor Markov test upgrade
+- `Hybrid-Frugal-Paper/images/plots/gcm_pvalue_histogram_Z1.png` and `Z2.png` - updated plots
+
+### Commit
+- **ddadae4** - All changes committed and pushed to origin/inversion
+
+### Known Issues (Out of Scope, Pre-existing)
+- \label on equation* (line 102)
+- Z_1 subscript typo (line 79)
+- Duplicate expression in Algorithm 1 (line 153)
+- M_1/M_2 vs M_A/M_B naming inconsistency
+- Double period at line 269
+- "p-values p-values" duplicate at line 288
+- Image filenames still use gcm_ prefix (functional but inconsistent)
+
+---
+
 ## Session: 2026-02-05 - Final Verification Complete
 
 ### Task Status
@@ -59,17 +118,6 @@ Both work because the Gaussian intermediate in ChatGPT's step 2 produces U_k ~ U
 ### Files Modified
 - `nonparanormal/causal_validation_longitudinal.R` — Replaced function with BN approach
 
-### Files to Commit
-- `.claude/scratchpad.md` — This file
-- `.claude/learnings.md` — Updated with session summary
-- `.claude/plan.md` — Marked complete
-- `.claude/handoff.md` — Final handoff
-- `nonparanormal/causal_validation_longitudinal.R` — Fixed implementation
-
-### Files to Clean Up (temporary)
-- `nonparanormal/test_should_fail.R` — Power validation test
-- `nonparanormal/validation_output.log` — Output log
-
 ---
 
 ## Session: 2026-02-04 (continued) - Fix Verified & Documented
@@ -124,7 +172,6 @@ ChatGPT provided a detailed explanation of sampling from Gaussian copula BNs wit
 - For simulation where you control the DGP
 
 ### Files Modified
-
 - `nonparanormal/causal_validation_longitudinal.R` — Replaced function with v2 implementation
 - `.claude/plan.md` — Marked steps complete
 - `.claude/learnings.md` — Added canonical algorithm documentation
@@ -259,179 +306,5 @@ Added new subsection 6.5 "Causal Effect Validation" to nonparanormal.tex with ex
 - IPW and AIPW are unbiased, confirming p(Y|do(X)) preservation
 - G-comp shows small bias in static model (outcome model misspecification)
 - Combined with independence tests, validates both structure and causal quantities
-
----
-
-## Session: 2026-02-03 16:00 - Causal Effect Validation Experiments
-
-### Current Task
-Implemented experiments to validate that nonparanormal approximation preserves causal margins p(Y|do(X))
-
-### Key Accomplishments
-
-**Created `R/generate_frugal_outcome.R`** (~400 lines)
-- `generate_frugal_outcome()` - Core function for frugal Y with known causal margin
-- `generate_frugal_outcome_approach_A()` - DAG-aware version
-- Causal estimators: `compute_ipw_ate()`, `compute_gcomp_ate()`, `compute_aipw_ate()`, `compute_naive_ate()`
-- Propensity score estimation helper
-
-**Created `causal_validation_static.R`** (~350 lines)
-- Single time point: Z -> X -> Y, Z -> Y
-- Known ATE = 0.5 (TRUE_BETA1)
-- 200 Monte Carlo simulations, N=5000 each
-- Tests IPW, G-comp, AIPW vs known truth
-- Verification checklist + visualizations
-
-**Created `causal_validation_dynamic.R`** (~450 lines)
-- Two time points with treatment at T=2
-- Dynamic margin: E[Y2|do(X2), Y1] = γ₀ + γ₁X2 + γ₂Y1
-- Z2 depends on (Z1, Y1) - temporal confounding
-- Markov property test: Y2 ⊥ Z1 | Z2, X2, Y1
-- Same estimator comparison as static
-
-### Critical Design Insight
-
-**X does NOT enter the copula structure**
-- The copula encodes φ*(Y, Z | do(X)) - dependence between Y and confounders
-- X affects Y ONLY through the causal margin specification
-- This ensures p(Y|do(X)) = ∫ p(Y|X,Z) p(Z) dZ correctly
-
-### Files Created
-- `nonparanormal/R/generate_frugal_outcome.R`
-- `nonparanormal/causal_validation_static.R`
-- `nonparanormal/causal_validation_dynamic.R`
-
-### Expected Results (When Run)
-| Estimator | Bias for True ATE |
-|-----------|------------------|
-| Naive OLS | Biased (confounding) |
-| IPW | ~0 (unbiased) |
-| G-computation | ~0 (unbiased) |
-| AIPW | ~0 (unbiased) |
-
-### Next Steps
-- [ ] Run experiments and verify results
-- [ ] Add to paper Section 6 experiments
-- [ ] Consider sensitivity analysis varying rho_Y_Z
-
----
-
-## Session: 2026-02-03 14:30 - Two Approaches to Nonparanormal Approximation
-
-### Current Task
-Clarifying fundamental design choice for nonparanormal approximation: regenerate vs preserve original data
-
-### Key Discussion
-
-**User Clarification:** There are TWO distinct approaches with different trade-offs
-
-#### Approach A: Regenerate from Gaussian Copula
-- Sample FRESH ranks from Gaussian copula with fitted correlation matrix
-- Conditional ranks are uniform by construction (from Gaussian copula h-functions)
-- Preserves: Marginals (exact), Markov/CI structure (exact)
-- Approximates: Z-Z tail dependence, conditional shapes
-
-#### Approach B: Preserve Original Data
-- Keep original Z values from non-Gaussian DGP
-- Use their (non-uniform) conditional ranks with Gaussian formulas
-- Preserves: Marginals (exact), Z-Z tail dependence, conditional shapes
-- Approximates: Markov/CI structure (~0.02 violations)
-
-### Critical Insight
-
-**Previous confusion:** The `longitudinal_fixed.R` implementation was doing Approach B
-- Taking conditional ranks from Gamma BN (non-uniform)
-- Trying to "uncondition" with Gaussian formulas
-- Result: Mismatch causing ~0.02 partial correlation violations
-
-**Correct understanding of Approach A:**
-- When you generate fresh from Gaussian copula, conditional ranks ARE uniform
-- This is by construction - the h-function maps to [0,1]
-- No "mismatch" because everything is Gaussian
-
-### Design Decision Needed for Paper
-
-Both approaches preserve the causal margin p(Y|do(X)). The choice is:
-- **Approach A:** Accept approximated Z-Z dependence to get exact Markov/CI
-- **Approach B:** Accept small Markov/CI violations to preserve Z-Z dependence
-
-**Recommendation:** Paper Section 6 should explicitly state which approach is used and justify the trade-off.
-
-### Files Modified
-- `.claude/learnings.md` — Added comprehensive comparison of both approaches
-
-### Next Steps
-- [ ] Update paper text to clarify which approach is being used
-- [ ] Possibly add appendix comparing both approaches empirically
-- [ ] Document this design choice in decisions.md
-
----
-
-## Session: 2026-02-03 - DAG-Aware Rank Unconditioning Implementation
-
-### Current Task
-Implemented DAG-aware rank unconditioning to fix Markov property preservation in longitudinal models.
-
-### Problem Solved
-The `uncondition_conditional_ranks` function assumed a fully-connected D-vine structure where each variable j is conditioned on ALL previous variables (1, 2, ..., j-1). This is incorrect for longitudinal models where variables should only be conditioned on their actual DAG parents.
-
-**Example (T=3, 2 covariates):**
-| Column | Variable | D-vine (wrong) | DAG (correct) |
-|--------|----------|----------------|---------------|
-| 3 | Z1_2 | Z1_1, Z2_1 | Z1_1 only |
-| 5 | Z1_3 | all prev | Z1_2 only |
-
-### Files Created
-- `nonparanormal/R/dag.R` - DAG utility functions (~300 lines):
-  - `dag_from_edges()` - Convert edge list to parent structure
-  - `dag_from_adjacency()` - Convert adjacency matrix to parent structure
-  - `make_chain_dag()` - Simple X1->X2->X3 chain
-  - `make_longitudinal_dag()` - Temporal model structure (markov, ar1, full)
-  - `check_dag_order()` - Validate topological order
-  - `get_topological_order()` - Compute valid ordering (Kahn's algorithm)
-  - `print_dag()` - Pretty-print DAG structure
-
-- `nonparanormal/tests/testthat/test-dag.R` - 47 tests for DAG functions
-
-### Files Modified
-- `nonparanormal/R/rank_transform.R`:
-  - Added `check_order` parameter for validation
-  - Added caching for repeated `solve(R_sub)` calls
-  - Enhanced documentation with `@seealso` links
-
-- `nonparanormal/nonparanormal.R`:
-  - Added `make_longitudinal_dag()` and `make_chain_dag()` helper functions
-  - Updated `uncondition_conditional_ranks()` with same enhancements
-
-- `nonparanormal/NAMESPACE`:
-  - Exported 7 new DAG functions
-
-- `nonparanormal/tests/testthat/test-rank_transform.R`:
-  - Added 7 DAG-aware unconditioning tests
-
-- `nonparanormal/longitudinal_fixed.R`:
-  - Replaced manual parent specification with `make_longitudinal_dag()` helper
-
-### Test Results
-- **DAG tests:** 47/47 passed
-- **Rank transform tests:** 18/18 passed
-- **Longitudinal experiment:**
-  - Partial correlations all ~0 (correct Markov property)
-  - GCM tests: 3/4 passed (borderline failure at 0.04 vs 0.05 threshold)
-
-### Key Design Decisions
-1. **Column ordering:** Z1_1, Z2_1, Z1_2, Z2_2, ... (matches longitudinal_fixed.R)
-2. **Markov structure:** Z_d^t depends on Z_d^{t-1} (AR term) + Z_1^t,...,Z_{d-1}^t (cross-sectional)
-3. **Caching:** R_sub inversions cached by parent set to avoid redundant solve() calls
-4. **Validation:** Topological order validated by default, can disable with check_order=FALSE
-
-### API Summary
-```r
-# Create longitudinal DAG
-parents <- make_longitudinal_dag(n_time = 3, n_cov = 2, structure = "markov")
-
-# Uncondition with DAG structure
-marginal_ranks <- uncondition_conditional_ranks(cond_ranks, R, parents)
-```
 
 ---
