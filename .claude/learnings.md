@@ -28,6 +28,47 @@
 
 ---
 
+## Update: 2026-02-15 (Paper Review Session)
+
+### From session 2026-02-15 (Bernoulli submission preparation):
+
+**Iterative Approval Workflow for Paper Editing:**
+- User prefers to approve each edit individually before implementation
+- Requires before/after comparisons for every change, even small ones
+- Will iterate on suggestions (v2, v3, v4) until satisfied
+- Implementation happens in batch or incrementally as directed
+- This is slower but ensures alignment on narrative and style decisions
+
+**Paper Structure Patterns:**
+- Introduction overlapping with background is common issue (Lin/Seaman comparison appeared 3 times)
+- "Related Work" subsections work better at end of Section 1 than in Section 2
+- Notation paragraphs should precede first use (start of Section 2, not mid-section)
+- Detailed technical comparisons belong in background, not introduction
+- Introduction should give 1-2 sentence positioning; background gives full comparison
+
+**Conference Submission Checklist (Bernoulli):**
+- Target length: ~40-45 pages for main text + critical appendices
+- Conclusion must be substantial (25-30 lines minimum, not 7)
+- Move proof details to appendix (keep Thm 5.1 as template, move 5.2/5.3)
+- Consolidate redundant experiments (3 experiments showing same thing → 2)
+- Delete expendable appendices (too-brief ones like App B, redundant ones like App F)
+- Delete ALL commented-out text before submission
+
+**Effective Review Process:**
+1. Read all sections and appendices completely
+2. Identify cross-cutting issues (redundancy, notation inconsistency)
+3. Generate prioritized action list (Top 10)
+4. Work through in page order (not importance order) for easier navigation
+5. Store full review in plan file for reference
+
+**Narrative vs Terseness:**
+- User explicitly prefers narrative/story flow over terse academic writing
+- "Problem → early solutions → general framework" structure works well
+- Detailed technical exposition should follow motivation, not precede it
+- Concrete examples (like Figure 1 in intro) are more valuable than abstract descriptions
+
+---
+
 ## Update: 2026-02-05 (Session Rotation)
 
 ### From archived sessions (Feb 3-4):
@@ -144,7 +185,7 @@ This algorithm is the "conditional ranks through conditional marginals" approach
 
 ---
 
-## Update: 2026-02-05 (Current Session)
+## Update: 2026-02-05 (Complete Section 6 Validation)
 
 ### Session Completed: Complete Paper Section 6 Validation
 
@@ -278,5 +319,118 @@ Z2 <- qgamma(U_Z2, shape = shape_Z2, scale = SCALE)
 - Handoff documents should be immediately actionable
 
 **Last Updated:** 2026-02-05 16:30
+
+---
+
+## Update: 2026-02-11 (Supervisor Feedback Work)
+
+### From sessions 2026-02-10 and 2026-02-11:
+
+**Batch Editing Workflow for Paper Feedback:**
+- Processed 50+ supervisor annotations in two commit batches (c2cab3a, 3bb4380)
+- Grouped by type: typos, grammar, British→American spelling, notation fixes
+- Efficient to batch similar changes together, commit in logical groups
+- Separate commits for conceptual changes (e.g., Corollary→Remark rewrite)
+
+**When to Defer vs Fix Immediately:**
+- **Fix immediately:** Typos, clear grammar errors, objective corrections
+- **Defer:** Conceptual questions, ambiguous comments, changes requiring context
+- **Ask supervisor:** When comment intent is unclear or change seems questionable
+
+**Handling Conceptual Passages:**
+- Don't guess supervisor intent on abstract concepts (e.g., uniqueness of natural PCCs)
+- Analyze the passage to identify the core conceptual question
+- Document specific alternatives (e.g., keep/simplify/remove Gamma notation)
+- Present analysis to supervisor with clear options
+
+**Notation Consistency Patterns:**
+- c_{Y|Z} vs c_{Y|Z*} — be precise about conditioning sets
+- "edge and Y" vs "edge to Y" — prepositions matter in graph theory
+- British vs American spelling — pick one standard and apply consistently
+
+**Managing Uncommitted Changes:**
+- Keep related fixes together (e.g., both notation fixes in uniqueness passage)
+- Don't commit until the full logical unit is complete
+- Use git diff to review before committing
+
+**Tracking Unresolved Items:**
+- Explicitly list items that need supervisor clarification
+- Distinguish "blocked" from "deferred" — blocked items stop progress
+- Document WHY each item is unresolved (unclear reference, needs conceptual decision, etc.)
+
+**Context Management:**
+- Rotate scratchpad at 5 sessions, activity.log at 500 lines
+- Extract learnings BEFORE archiving (they're not in the old content)
+- Handoff should specify EXACTLY how to resume, including what NOT to do
+
+**Last Updated:** 2026-02-14 17:00
+
+---
+
+## Update: 2026-02-14 (Paper Restructuring Work)
+
+### From session 2026-02-14:
+
+**Pedagogical Flow in Technical Papers:**
+- Lead with motivation (WHY) before tools (HOW)
+- Section 2 restructuring: MSMs → Copulas → PCCs is more natural than Copulas → MSMs
+- Readers need context for why technical machinery is necessary
+- Notation should appear just before first use, not as isolated preamble
+
+**Cross-Reference Management:**
+- When moving content to appendix, grep for all references: `\Cref`, `\ref`, `\eqref`
+- Fix references before committing (prevents broken builds)
+- Descriptive label names help: `app:integral-pcc` better than `sec:counterexample`
+
+**Appendix Organization:**
+- Order appendices by first citation in main text
+- integral_pcc cited in Section 2 → becomes Appendix A
+- Modular appendices (6 files) easier to navigate than monolithic file
+
+**Commit Granularity:**
+- Separate commits for: (1) reference fixes, (2) polish/flow, (3) major restructuring
+- Makes git history more useful for tracking logical changes
+- Easy to revert specific changes if needed
+
+**Duplicate Content Detection:**
+- Check for duplicates when moving content between sections and appendix
+- Example: topological ordering example was in both main text and integral_pcc.tex
+- Removing duplicates reduces paper length without losing content
+
+**Bridging Sentences:**
+- Add forward references when introducing new subsections: "Before addressing this question in \Cref{sec:method},"
+- Helps readers understand narrative flow
+- Especially important after major restructuring
+
+**Last Updated:** 2026-02-14 21:00
+
+---
+
+## Update: 2026-02-14 (Subsection 2.1 Rewrite Session)
+
+### From session 2026-02-14 (second session today):
+
+**Collaborative Editing Workflow:**
+- When both user and agent edit same files, coordinate frequently
+- Pull remote changes before continuing work
+- User may manually clean up commented-out LaTeX — this is normal
+- Git submodule workflow: commit in submodule first, then update parent repo pointer
+
+**Narrative Structure Preferences:**
+- User prefers "problem → early solutions → general framework" structure
+- For Section 2.1: MSM need → prior work → Evans framework → recent extensions → limitations
+- This creates clear intellectual progression
+
+**Multi-commit Workflow:**
+- Initial implementation may get replaced after user review
+- Be prepared to restructure even after committing (use rebase if needed)
+- User feedback can completely change narrative flow — this is normal iteration
+
+**Managing External Edits:**
+- When pulling remote changes, note what changed (git log, git diff)
+- User may fix things we missed (commented-out text cleanup)
+- Pull twice if needed — user may push multiple times
+
+**Last Updated:** 2026-02-15 16:30
 
 ---

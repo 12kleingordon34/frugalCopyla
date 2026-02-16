@@ -777,6 +777,175 @@ uncondition_conditional_ranks <- function(cond_ranks, R, parents = NULL, check_o
 }
 
 
+# =============================================================================
+# DAG-Constrained Gaussian Copula (Route B)
+# =============================================================================
+
+#' Normalise Parents List to Integer Indices
+#' @keywords internal
+normalise_parents <- function(parents, var_names) {
+  d <- length(var_names)
+  if (!is.null(names(parents))) {
+    if (!setequal(names(parents), var_names)) {
+      stop("Parent names do not match variable names")
+    }
+    parents <- parents[var_names]
+  } else {
+    if (length(parents) != d) {
+      stop(sprintf("Length of parents (%d) must equal number of variables (%d)",
+                   length(parents), d))
+    }
+  }
+  parents_idx <- lapply(seq_along(parents), function(j) {
+    pa <- parents[[j]]
+    if (length(pa) == 0 || (length(pa) == 1 && (is.na(pa) || pa == ""))) {
+      return(integer(0))
+    }
+    if (is.character(pa)) {
+      idx <- match(pa, var_names)
+      if (any(is.na(idx))) stop(sprintf("Unknown parent name(s) for node %d", j))
+      return(idx)
+    } else if (is.numeric(pa)) {
+      pa <- as.integer(pa)
+      if (any(pa < 1 | pa > d)) stop(sprintf("Parent index out of bounds for node %d", j))
+      return(pa)
+    } else {
+      stop("parents must be character names or integer indices")
+    }
+  })
+  names(parents_idx) <- var_names
+  return(parents_idx)
+}
+
+#' Topological Sort Using Kahn's Algorithm
+#' @keywords internal
+topological_sort_kahn <- function(parents) {
+  d <- length(parents)
+  children <- vector("list", d)
+  for (j in seq_len(d)) children[[j]] <- integer(0)
+  for (j in seq_len(d)) {
+    for (pa in parents[[j]]) children[[pa]] <- c(children[[pa]], j)
+  }
+  in_degree <- lengths(parents)
+  queue <- which(in_degree == 0)
+  order <- integer(0)
+  while (length(queue) > 0) {
+    node <- queue[1]
+    queue <- queue[-1]
+    order <- c(order, node)
+    for (child in children[[node]]) {
+      in_degree[child] <- in_degree[child] - 1
+      if (in_degree[child] == 0) queue <- c(queue, child)
+    }
+  }
+  if (length(order) != d) stop("Cycle detected in DAG")
+  return(order)
+}
+
+#' Fit Gaussian Copula with DAG Structure
+#'
+#' Projects onto DAG-constrained Gaussian BN family via OLS regression.
+#'
+#' @param U Matrix of pseudo-observations (n x d) in (0, 1)
+#' @param parents List mapping variable index -> parent indices
+#' @param topo_order Optional integer vector specifying topological order
+#' @param centre Logical: centre Z columns (default TRUE)
+#' @param eps Floor for sigma^2_j (default: 1e-10)
+#' @return List with B, sigma2, Sigma, R, L, parents, etc.
+fit_gaussian_copula_dag <- function(U, parents, topo_order = NULL,
+                                     centre = TRUE, eps = 1e-10) {
+  U <- as.matrix(U)
+  n <- nrow(U)
+  d <- ncol(U)
+  var_names <- colnames(U)
+  if (is.null(var_names)) {
+    var_names <- paste0("V", seq_len(d))
+    colnames(U) <- var_names
+  }
+  parents_idx <- normalise_parents(parents, var_names)
+  if (length(parents_idx) != d) {
+    stop(sprintf("Length of parents (%d) must equal number of columns (%d)",
+                 length(parents_idx), d))
+  }
+  if (is.null(topo_order)) {
+    topo_order <- topological_sort_kahn(parents_idx)
+  }
+  Z <- qnorm(U)
+  if (centre) {
+    Z <- scale(Z, center = TRUE, scale = FALSE)
+  } else {
+    stop("centre = FALSE not supported")
+  }
+  B <- matrix(0, d, d)
+  rownames(B) <- colnames(B) <- var_names
+  sigma2 <- numeric(d)
+  names(sigma2) <- var_names
+  regressions <- vector("list", d)
+  names(regressions) <- var_names
+  for (j in topo_order) {
+    pa_j <- parents_idx[[j]]
+    if (length(pa_j) == 0) {
+      sigma2[j] <- max(var(Z[, j]), eps)
+      regressions[[j]] <- list(node = var_names[j], parents = character(0),
+                                coefficients = NULL, residual_var = sigma2[j], is_root = TRUE)
+    } else {
+      fit_lm <- lm(Z[, j] ~ Z[, pa_j, drop = FALSE] - 1)
+      beta_j <- coef(fit_lm)
+      B[pa_j, j] <- beta_j
+      sigma2[j] <- max(var(residuals(fit_lm)), eps)
+      regressions[[j]] <- list(node = var_names[j], parents = var_names[pa_j],
+                                coefficients = setNames(beta_j, var_names[pa_j]),
+                                residual_var = sigma2[j], is_root = FALSE)
+    }
+  }
+  T_mat <- diag(d) - t(B)
+  rownames(T_mat) <- colnames(T_mat) <- var_names
+  D <- diag(sigma2, nrow = d)
+  rownames(D) <- colnames(D) <- var_names
+  T_inv <- solve(T_mat)
+  Sigma <- T_inv %*% D %*% t(T_inv)
+  Sigma <- (Sigma + t(Sigma)) / 2
+  rownames(Sigma) <- colnames(Sigma) <- var_names
+  R <- cov2cor(Sigma)
+  L <- tryCatch({
+    t(chol(R))
+  }, error = function(e) {
+    warning("chol(R) failed; adding small jitter to diagonal")
+    t(chol(R + diag(eps, d)))
+  })
+  rownames(L) <- colnames(L) <- var_names
+  return(list(B = B, sigma2 = sigma2, T_mat = T_mat, D = D,
+              Sigma = Sigma, R = R, L = L, regressions = regressions,
+              topo_order = topo_order, var_names = var_names,
+              parents = parents_idx, d = d))
+}
+
+#' Fit Reference Gaussian BN from Raw Covariate Data
+#'
+#' @param Z_ref Matrix of observed covariate values (n x d)
+#' @param parents List mapping variable index -> parent indices
+#' @param n_ref Integer. If generate_fn provided, number of reference samples
+#' @param generate_fn Optional function that generates reference data
+#' @param ... Additional arguments passed to fit_gaussian_copula_dag
+#' @return Fitted model list from fit_gaussian_copula_dag
+fit_reference_gaussian_bn <- function(Z_ref, parents, n_ref = NULL,
+                                       generate_fn = NULL, ...) {
+  if (!is.null(generate_fn) && !is.null(n_ref)) {
+    Z_ref <- generate_fn(n_ref)
+  }
+  if (is.null(Z_ref)) {
+    stop("Either Z_ref must be provided or both generate_fn and n_ref must be specified")
+  }
+  Z_ref <- as.matrix(Z_ref)
+  n <- nrow(Z_ref)
+  U_ref <- apply(Z_ref, 2, function(col) {
+    rank(col, ties.method = "average") / (n + 1)
+  })
+  if (!is.null(colnames(Z_ref))) colnames(U_ref) <- colnames(Z_ref)
+  fit <- fit_gaussian_copula_dag(U_ref, parents, ...)
+  return(fit)
+}
+
 
 #' Generate Outcome Rank Samples from Vine Copula Simulation with Marginal Ranks
 #'
@@ -806,29 +975,33 @@ uncondition_conditional_ranks <- function(cond_ranks, R, parents = NULL, check_o
 simulateMarginalOutcomeSamples <- function(covariate_data,
                                    marginal_covariate_ranks,
                                    vine_cor_params,
-                                   topoOrder = NULL) {
-  ## Step 1: Fit the Gaussian copula to the covariate data.
+                                   topoOrder = NULL,
+                                   gaussian_bn_fit = NULL) {
   cov_data_matrix <- as.matrix(covariate_data)
-  gaussianCopulaFit <- fitMVGaussianCopula(dataQuantiles = cov_data_matrix, method = 'itau')
-  
-  ## Step 2: Construct the full correlation matrix.
   n_cov <- ncol(cov_data_matrix)
   if (is.null(topoOrder)) {
     topoOrder <- 1:(n_cov + 1)
   }
-  # Use the correlation matrix from the Gaussian copula fit.
-  corMatrixMN <- gaussianCopulaFit$correlationMatrix
+
+  # Determine correlation matrix: DAG-constrained or unconstrained
+  gaussianCopulaFit <- NULL
+  if (!is.null(gaussian_bn_fit)) {
+    corMatrixMN <- gaussian_bn_fit$R
+  } else {
+    gaussianCopulaFit <- fitMVGaussianCopula(dataQuantiles = cov_data_matrix, method = 'itau')
+    corMatrixMN <- gaussianCopulaFit$correlationMatrix
+  }
+
   fullCorrelationMatrix <- computeFullCorMatrix(topoOrder, corMatrixMN, vine_cor_params)
-  
-  ## Step 3: Generate outcome rank samples.
-  # Transform the simulated conditional covariate ranks with qnorm (to obtain normal scores).
+
   X2_samples <- qnorm(as.matrix(marginal_covariate_ranks))
-  outcome_model <- multivariate_conditional_mean_and_samples(X2_samples = X2_samples, 
+  outcome_model <- multivariate_conditional_mean_and_samples(X2_samples = X2_samples,
                                                              R = fullCorrelationMatrix)
   outcomeRankSamples <- pnorm(outcome_model$generated_samples)
-  
+
   return(list(
     gaussianCopulaFit = gaussianCopulaFit,
+    gaussian_bn_fit = gaussian_bn_fit,
     fullCorrelationMatrix = fullCorrelationMatrix,
     outcomeRankSamples = outcomeRankSamples
   ))
@@ -862,31 +1035,45 @@ simulateMarginalOutcomeSamples <- function(covariate_data,
 simulateConditionalOutcomeSamples <- function(covariate_data,
                                               cond_covariate_ranks,
                                            vine_cor_params,
-                                           topoOrder = NULL) {
-  ## Step 1: Fit the Gaussian copula to the covariate data.
+                                           topoOrder = NULL,
+                                           gaussian_bn_fit = NULL,
+                                           parents = NULL) {
   cov_data_matrix <- as.matrix(covariate_data)
-  gaussianCopulaFit <- fitMVGaussianCopula(dataQuantiles = cov_data_matrix, method = 'itau')
-  
-  ## Step 2: Construct the full correlation matrix.
   n_cov <- ncol(cov_data_matrix)
   if (is.null(topoOrder)) {
     topoOrder <- 1:(n_cov + 1)
   }
-  # Use the correlation matrix from the Gaussian copula fit.
-  corMatrixMN <- gaussianCopulaFit$correlationMatrix
+
+  # Determine correlation matrix: DAG-constrained (Route B) or unconstrained
+  gaussianCopulaFit <- NULL
+  if (!is.null(gaussian_bn_fit)) {
+    corMatrixMN <- gaussian_bn_fit$R
+    if (is.null(parents)) parents <- gaussian_bn_fit$parents
+  } else {
+    if (!is.null(parents)) {
+      gaussian_bn_fit <- fit_reference_gaussian_bn(cov_data_matrix, parents)
+      corMatrixMN <- gaussian_bn_fit$R
+    } else {
+      gaussianCopulaFit <- fitMVGaussianCopula(dataQuantiles = cov_data_matrix, method = 'itau')
+      corMatrixMN <- gaussianCopulaFit$correlationMatrix
+    }
+  }
+
   fullCorrelationMatrix <- computeFullCorMatrix(topoOrder, corMatrixMN, vine_cor_params)
-  
-  
-  marginal_covariate_ranks <- uncondition_conditional_ranks(cond_covariate_ranks, corMatrixMN)
-  ## Step 3: Generate outcome rank samples.
-  # Transform the simulated conditional covariate ranks with qnorm (to obtain normal scores).
+
+  # Transform conditional ranks to marginal ranks
+  marginal_covariate_ranks <- uncondition_conditional_ranks(
+    cond_covariate_ranks, corMatrixMN, parents = parents
+  )
+
   X2_samples <- qnorm(as.matrix(marginal_covariate_ranks))
-  outcome_model <- multivariate_conditional_mean_and_samples(X2_samples = X2_samples, 
+  outcome_model <- multivariate_conditional_mean_and_samples(X2_samples = X2_samples,
                                                              R = fullCorrelationMatrix)
   outcomeRankSamples <- pnorm(outcome_model$generated_samples)
-  
+
   return(list(
     gaussianCopulaFit = gaussianCopulaFit,
+    gaussian_bn_fit = gaussian_bn_fit,
     fullCorrelationMatrix = fullCorrelationMatrix,
     outcomeRankSamples = outcomeRankSamples
   ))

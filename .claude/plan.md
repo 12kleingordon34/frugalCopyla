@@ -1,94 +1,173 @@
 # Current Plan
 
-**Goal:** Complete Paper Section 6 Updates with All Three Validation Experiments
-**Started:** 2026-02-05
-**Status:** ✅ COMPLETE - All Committed (ddadae4) and Pushed to origin/inversion
+**Goal:** Paper Revisions - Bernoulli Submission Preparation (56→40 pages)
+**Started:** 2026-02-15
+**Status:** In Progress - Review Complete, Edits in Approval Phase
+**Branch:** inversion (parent), main (submodule)
 
 ## Overview
 
-Complete comprehensive updates to Paper Section 6 (Nonparanormal) with consistent validation results across all three experiments (static, dynamic, longitudinal) showing unbiased ATE estimates.
+Comprehensive paper review targeting Bernoulli conference submission. Working through Top 10 priority actions in page order with individual user approval before implementation.
 
-## Completed Steps
+**Current Paper State:** 56 pages (main + 6 appendices)
+**Target:** ~40-45 pages
+**Estimated Reduction:** 10-15 pages via consolidation and appendix moves
 
-### Phase 1: Paper Text Edits ✅
-- [x] Add Remark after Algorithm 1 explaining BN vs copula distinction (commit: ddadae4)
-- [x] Clarify Section 6.5 validation subsection with explicit BN/copula terminology (commit: ddadae4)
-- [x] Add "Sampling Mechanism" paragraph explaining independent ranks + conditional CDFs (commit: ddadae4)
-- [x] Add Dynamic Model Validation subsubsection with DAG, Markov test results, ATE table (commit: ddadae4)
-- [x] Fix appendix GCM → partial correlation labels in Section app:ci-pvalues (commit: ddadae4)
+---
 
-### Phase 2: Dynamic Script Upgrade ✅
-- [x] Add library(ppcor) import to causal_validation_dynamic.R (commit: ddadae4)
-- [x] Rewrite test_markov_property() to use ppcor::pcor.test (commit: ddadae4)
-- [x] Integrate Markov test into run_single_dynamic_simulation() (commit: ddadae4)
-- [x] Add KS uniformity test for p-values (commit: ddadae4)
-- [x] Add p-value histogram output (commit: ddadae4)
-- [x] Update verification checklist in script comments (commit: ddadae4)
+## Top 10 Priority Actions (From Paper Review)
 
-### Phase 3: Re-run All Three Experiments ✅
-- [x] Static model: Confirmed IPW unbiased (p=0.295), AIPW unbiased (p=0.786)
-- [x] Dynamic model: All pass, KS p=0.485, mean pcor=-0.0001
-- [x] Longitudinal model: KS improved to 0.928/0.618 (from previous 0.044/0.805)
+### Phase 1: Introduction & Background Edits (In Progress)
 
-### Phase 4: Verification & Final Fixes ✅
-- [x] Code review identified issues (commit: ddadae4)
-- [x] Fixed KS p-value display in dynamic section (commit: ddadae4)
-- [x] Fixed Z^{t-1} notation in appendix (commit: ddadae4)
-- [x] Documented pre-existing issues as out of scope
-- [x] Committed all changes (commit: ddadae4)
-- [x] Pushed to origin/inversion
+- [x] **Action 1/10:** Review complete paper and generate priority list
+- [x] **Action 2/10:** Trim introduction lines 1-17 (BN/copula preamble) — v3 approved by user
+- [x] **Action 3/10:** Deduplicate Lin/Seaman in introduction (lines 26-28) — v4 approved by user
+- [x] **Action 4/10:** Create Related Work subsection at end of Section 1 — approved
+- [x] **Action 5/10:** Move notation paragraph to start of Section 2 — approved
+- [ ] **Action 6/10:** Trim PCC Uniqueness subsection (Section 2.5) — pending presentation
+- [ ] **Action 7/10:** Move Theorems 5.2/5.3 proofs to appendix — pending presentation
 
-## Summary of Results
+### Phase 2: Section 6 Consolidation (Pending)
 
-### All Three Validation Experiments Complete
+- [ ] **Action 8/10:** Consolidate Section 6 experiments (keep one static + longitudinal)
+  - Drop one static model validation
+  - Replace p-value histograms with summary table
+  - Move dropped content to supplementary material
 
-| Model | Markov Test | IPW Bias | AIPW Bias | Status |
-|-------|-------------|----------|-----------|--------|
-| Static | N/A | 0.002 (p=0.295) | 0.001 (p=0.786) | ✅ Unbiased |
-| Dynamic | KS p=0.485 | 0.001 (p=0.547) | 0.000 (p=0.827) | ✅ Unbiased |
-| Longitudinal | KS p=0.928/0.618 | 0.0004 | 0.002 | ✅ Unbiased |
+### Phase 3: Conclusion & Appendices (Pending)
 
-**Key achievement:** All three experiments show consistent unbiased ATE estimates, confirming that nonparanormal approximation preserves causal margins p(Y|do(X)).
+- [ ] **Action 9/10:** Expand conclusion from 7 to 25-30 lines
+  - Recap contributions
+  - Practical significance
+  - Limitations
+  - Future directions
 
-## Files Modified
+- [ ] **Action 10/10:** Delete Appendices B and F
+  - App B (Vine Sampling): Too brief, fold into Section 2 or delete
+  - App F (CI p-values): Redundant with Section 6 tables
 
-| File | Description | Commit |
-|------|-------------|--------|
-| `Hybrid-Frugal-Paper/sections/nonparanormal.tex` | All text updates | ddadae4 |
-| `Hybrid-Frugal-Paper/sections/appendix.tex` | GCM→partial correlation fix | ddadae4 |
-| `nonparanormal/causal_validation_dynamic.R` | ppcor Markov test upgrade | ddadae4 |
-| `Hybrid-Frugal-Paper/images/plots/gcm_pvalue_histogram_Z*.png` | Updated plots | ddadae4 |
+### Phase 4: Cross-Cutting Polish (Pending)
 
-## Known Issues (Out of Scope)
+- [ ] Delete all commented-out text across all sections
+- [ ] Add intuition for Conditions 3-4 in Section 5
+- [ ] Add sensitivity discussion to Section 6
 
-Pre-existing issues noted by code reviewer but not fixed (would require broader paper review):
-- \label on equation* (line 102)
-- Z_1 subscript typo (line 79)
-- Duplicate expression in Algorithm 1 (line 153)
-- M_1/M_2 vs M_A/M_B naming inconsistency
-- Double period at line 269
-- "p-values p-values" duplicate at line 288
-- Image filenames still use gcm_ prefix (functional but inconsistent)
+---
 
-## Next Steps (Future Work)
+## Active Edit Progress
 
-- [ ] Address pre-existing paper issues in separate pass
-- [ ] Consider adding methodological note about BN vs vine approaches
-- [ ] Review entire paper for notation consistency
-- [ ] Final submission preparation
+### Edit 1: Trim Introduction Lines 1-17 (APPROVED v3)
+
+**Before:** ~230 words across two paragraphs
+**After:** ~100 words in single paragraph
+**Status:** User approved replacement text, awaiting implementation
+
+**Replacement text:**
+```latex
+Bayesian networks (BNs) and copula models offer complementary approaches to parameterizing multivariate distributions. BNs decompose the joint into conditional factors and naturally encode conditional-independence constraints, making them a standard tool in causal reasoning~\citep{koller2009probabilistic}. Copulas instead separate marginal distributions from the dependence structure~\citep{sklar1959,joe2014dependence}; for high-dimensional settings, pair-copula constructions (PCCs) decompose the joint dependence into a sequence of bivariate copulas, offering considerable modelling flexibility~\citep{bedford2002vines,bauer2012paircopula}.
+```
+
+### Edit 2: Deduplicate Lin/Seaman (APPROVED v4)
+
+**Before:** ~180 words — detailed comparison
+**After:** ~60 words — brief positioning + forward reference
+**Status:** User approved replacement text, awaiting implementation
+
+**Replacement text:**
+```latex
+Related works target different objects and encode dependence in different ways. \citet{lin2025exactsimulationlongitudinaldata} extend frugal models to longitudinal MSMs via pair-copula constructions, while \citet{seaman2023simulating} target survival-time MSMs by coupling a confounder risk score to a latent failure mechanism via a copula. A detailed comparison of how each approach handles conditional-independence constraints appears in \Cref{sec:background}.
+```
+
+**Additional cleanup:** Delete commented-out lines 30-32
+
+### Edit 3: Create Related Work Subsection (APPROVED)
+
+**Action:** Create `\subsection{Related Work}` at end of Section 1
+**Content to collect:**
+- Young/Keogh/Havercroft prior work from background
+- Lin/Seaman detailed comparison from background lines 43-49
+- Markov narrative
+
+**Status:** Approved in principle, awaiting detailed before/after
+
+### Edit 4: Move Notation Paragraph (APPROVED)
+
+**From:** background.tex after copulas intro (current lines 53-55)
+**To:** Start of Section 2 (before subsections)
+**Rationale:** Notation should precede first use, not appear mid-section
+**Status:** Approved, awaiting implementation
+
+---
+
+## Completed Steps (Previous Sessions)
+
+### 2026-02-14: Section 2.1 MSM Rewrite - DONE
+
+- [x] Apply initial 4 edits to strengthen MSM motivation (commit: b36d60c, b3d4c4e)
+- [x] Restructure narrative flow based on user feedback (commit: 685d1d1, ecb0ddc)
+- [x] Pull user's remote edits (commits: 9d8a4e5, 2eb23e4)
+
+### 2026-02-14: Section 2 Restructuring - DONE
+
+- [x] Fix integral_pcc appendix references (commit: 01248ee)
+- [x] Polish Section 2 flow (commit: 0f29a07)
+- [x] Reorder subsections: MSMs → Copulas → PCCs → Uniqueness → BNs (uncommitted from earlier)
+
+### 2026-02-10-13: Supervisor Feedback - DONE
+
+- [x] Phase 1: Quick Fixes (commit: c2cab3a)
+- [x] Phase 2: Corollary 2.3 Rewrite (commit: 3bb4380)
+- [x] Phase 3-5: Background notation, Condition 3, Appendix modularization
+
+---
+
+## Next Steps
+
+1. **Await user signal to proceed with implementation** of edits 1-4
+2. Present action 6/10 (PCC Uniqueness trimming) for approval
+3. Present action 7/10 (move proofs) for approval
+4. Continue through remaining actions with individual approval
+
+---
 
 ## Blockers
 
-None - all work complete and committed.
+**No active blockers.** User approving edits individually before implementation (by design).
 
 ---
 
-# Previous Plan: Markov Property Fix (Complete)
+## Notes
 
-**Goal:** Debug and Fix Markov Property Violations in Longitudinal Causal Validation
-**Started:** 2026-02-04
-**Status:** ✅ COMPLETE - Fully Verified with 200 Simulations (2026-02-05)
+- **Branch:** inversion (parent), main (submodule at commit a4cc32b)
+- **Workflow:** Plan mode active — approval before implementation
+- **User preferences:**
+  - Before/after comparison for every change
+  - Individual approval per suggestion
+  - Narrative flow over terseness
+  - No em dashes
+  - Related Work at end of Section 1 (not Section 2)
 
-All steps completed. See archived scratchpad for details.
+- **Uncommitted changes from previous sessions:**
+  - Section 2 subsection reordering (from 2026-02-14, may need verification)
+
+- **Paper review location:**
+  - Full review stored in `/Users/danielmanela/.claude/plans/inherited-leaping-hickey.md`
 
 ---
+
+# Previous Plans (Completed)
+
+## Plan: Subsection 2.1 Rewrite - COMPLETE (2026-02-14)
+
+**Goal:** Strengthen MSM motivation and improve narrative flow
+**Status:** Complete (commits: b36d60c, 685d1d1, 9d8a4e5, 2eb23e4)
+
+## Plan: Supervisor Feedback Quick Fixes - COMPLETE (2026-02-10)
+
+**Goal:** Address RJE annotations
+**Status:** Complete (commits: c2cab3a, 3bb4380)
+
+## Plan: Section 6 Validation - COMPLETE (2026-02-05)
+
+**Goal:** Complete all three validation experiments
+**Status:** Complete (commit: ddadae4, pushed to origin/inversion)

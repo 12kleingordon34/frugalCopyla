@@ -25,6 +25,13 @@ NULL
 #'   Length must equal ncol(Z).
 #' @param outcome_family Character. Distribution family for Y. Currently only
 #'   "gaussian" is supported. Default is "gaussian".
+#' @param gaussian_bn_fit Optional. A pre-fitted DAG-constrained Gaussian BN
+#'   (from \code{\link{fit_reference_gaussian_bn}}). If provided, its correlation
+#'   matrix \code{R} is used instead of fitting an unconstrained Gaussian copula.
+#' @param dag_parents Optional list. DAG parent structure for each covariate.
+#'   If provided (without \code{gaussian_bn_fit}), a DAG-constrained Gaussian BN
+#'   is auto-fitted from Z. If NULL, falls back to unconstrained copula (backward
+#'   compatible).
 #' @param seed Optional integer for reproducibility.
 #'
 #' @return A list containing:
@@ -32,14 +39,16 @@ NULL
 #'   \item{Y}{The generated outcome vector}
 #'   \item{Y_ranks}{The outcome ranks (uniform on [0,1])}
 #'   \item{causal_means}{The causal means E[Y|do(X)] for each observation}
-#'   \item{fitted_copula}{The fitted Gaussian copula to Z}
+#'   \item{fitted_copula}{The fitted Gaussian copula to Z (NULL if using gaussian_bn_fit)}
+#'   \item{gaussian_bn_fit}{The DAG-constrained Gaussian BN fit (if used)}
 #'   \item{full_correlation_matrix}{The full correlation matrix including Y}
 #' }
 #'
 #' @details
 #' The function works by:
-#' 1. Fitting a Gaussian copula to the observed confounders Z
-#' 2. Computing marginal ranks of Z (unconditioning if necessary)
+#' 1. Fitting a Gaussian copula (unconstrained or DAG-constrained) to the
+#'    observed confounders Z
+#' 2. Computing marginal ranks of Z (empirical ranks)
 #' 3. Building the full correlation matrix including Y using the specified
 #'    partial correlations rho_Y_Z
 #' 4. Generating Y conditional on (marginal ranks of Z) with:
@@ -84,6 +93,8 @@ generate_frugal_outcome <- function(X,
                                      causal_sd = 1,
                                      rho_Y_Z,
                                      outcome_family = "gaussian",
+                                     gaussian_bn_fit = NULL,
+                                     dag_parents = NULL,
                                      seed = NULL) {
   if (!is.null(seed)) set.seed(seed)
 
@@ -112,23 +123,29 @@ generate_frugal_outcome <- function(X,
   Z_ranks <- as.matrix(Z_ranks)  # Ensure it's a matrix even for single column
 
   # Step 2: Handle single vs multiple confounders
+  fitted_copula <- NULL
   if (n_confounders == 1) {
     # Single confounder case: no copula fitting needed between Z's
     # The correlation matrix is just [1, rho; rho, 1] for (Z, Y)
-    fitted_copula <- list(correlationMatrix = matrix(1, 1, 1))
-
-    # Full correlation matrix is 2x2: (Z, Y)
     fullCorrelationMatrix <- matrix(c(1, rho_Y_Z[1], rho_Y_Z[1], 1), nrow = 2)
   } else {
-    # Multiple confounders: fit Gaussian copula to Z
-    fitted_copula <- fitMVGaussianCopula(dataQuantiles = Z_ranks, method = 'itau')
+    # Determine correlation matrix: DAG-constrained or unconstrained
+    if (!is.null(gaussian_bn_fit)) {
+      corMatrixMN <- gaussian_bn_fit$R
+    } else if (!is.null(dag_parents)) {
+      gaussian_bn_fit <- fit_reference_gaussian_bn(Z, dag_parents)
+      corMatrixMN <- gaussian_bn_fit$R
+    } else {
+      # Backward compatible: fit unconstrained Gaussian copula
+      fitted_copula <- fitMVGaussianCopula(dataQuantiles = Z_ranks, method = 'itau')
+      corMatrixMN <- fitted_copula$correlationMatrix
+    }
 
     # Build full correlation matrix including Y
-    # The topological order for the vine: Z1, Z2, ..., Zk, Y
     topoOrder <- 1:n_confounders
     fullCorrelationMatrix <- computeFullCorMatrix(
       topoOrder = topoOrder,
-      corMatrixMN = fitted_copula$correlationMatrix,
+      corMatrixMN = corMatrixMN,
       vineCorParams = rho_Y_Z
     )
   }
@@ -138,25 +155,15 @@ generate_frugal_outcome <- function(X,
   Z_normal <- qnorm(Z_ranks)
 
   # Generate Y from conditional normal distribution
-  # Y | Z ~ N(mu_Y|Z, sigma_Y|Z) where the copula encodes the correlation
   outcome_model <- multivariate_conditional_mean_and_samples(
     X2_samples = Z_normal,
     R = fullCorrelationMatrix
   )
 
-  # outcome_model gives us Y on standard normal scale (mean 0, var = conditional var)
-  # We need to transform this to have the specified causal margin
-
-  # Step 5: Transform to have correct causal margin
-  # The copula-generated Y is standard normal-ish conditional on Z
-  # We want: Y | do(X=x) ~ N(causal_mean_fn(x), causal_sd^2)
-  #
-  # Key: The copula quantile U_Y encodes Y-Z dependence
+  # Step 4: Transform to have correct causal margin
+  # The copula quantile U_Y encodes Y-Z dependence
   # We use: Y = F_Y^{-1}(U_Y; X) where F_Y depends on X through causal_mean_fn
-
-  # Get the copula ranks for Y (these encode Y-Z dependence, NOT X dependence)
-  Y_ranks <- as.vector(outcome_model$generated_samples)
-  Y_ranks <- pnorm(Y_ranks)  # Convert back to uniform
+  Y_ranks <- pnorm(as.vector(outcome_model$generated_samples))
 
   # Transform using the causal margin: Y = causal_mean + causal_sd * qnorm(U_Y)
   causal_means <- causal_mean_fn(X)
@@ -167,6 +174,7 @@ generate_frugal_outcome <- function(X,
     Y_ranks = Y_ranks,
     causal_means = causal_means,
     fitted_copula = fitted_copula,
+    gaussian_bn_fit = gaussian_bn_fit,
     full_correlation_matrix = fullCorrelationMatrix
   ))
 }
@@ -175,13 +183,15 @@ generate_frugal_outcome <- function(X,
 #' Generate Frugal Outcome from Conditional Ranks (Approach A)
 #'
 #' Generates outcome Y using "Approach A" from the nonparanormal approximation:
-#' - Regenerates Z from a fitted Gaussian copula (ensures perfect Markov structure)
+#' - Uses DAG-constrained Gaussian BN (Route B) to obtain marginal ranks
+#'   from conditional PITs via SEM propagation
 #' - Generates Y with specified causal margin
 #'
 #' This approach is preferred when exact Markov structure is required.
 #'
 #' @param X Numeric vector. Treatment variable (typically binary 0/1).
-#' @param Z_original Matrix or data.frame. Original confounder data (used to fit copula).
+#' @param Z_original Matrix or data.frame. Original confounder data (used to fit
+#'   Gaussian BN if \code{gaussian_bn_fit} is not provided).
 #' @param Z_cond_ranks Matrix. Conditional ranks from the BN simulation
 #'   (e.g., U1, U_{2|1}, U_{3|1,2}, ...).
 #' @param dag_parents List. Parent structure for the DAG. Each element is a vector
@@ -190,16 +200,18 @@ generate_frugal_outcome <- function(X,
 #' @param causal_sd Numeric. Standard deviation of Y|do(X). Default is 1.
 #' @param rho_Y_Z Numeric vector. Partial correlations between Y and each Z.
 #' @param outcome_family Character. Currently only "gaussian". Default is "gaussian".
+#' @param gaussian_bn_fit Optional. A pre-fitted DAG-constrained Gaussian BN
+#'   (from \code{\link{fit_reference_gaussian_bn}}). If NULL, auto-fitted from
+#'   \code{Z_original} and \code{dag_parents}.
 #' @param seed Optional integer for reproducibility.
 #'
 #' @return A list containing:
 #' \describe{
 #'   \item{Y}{The generated outcome vector}
 #'   \item{Y_ranks}{The outcome ranks}
-#'   \item{Z_regenerated}{The regenerated Z values (with exact Markov structure)}
 #'   \item{Z_marginal_ranks}{Marginal ranks of Z (after unconditioning)}
 #'   \item{causal_means}{The causal means E[Y|do(X)] for each observation}
-#'   \item{fitted_copula}{The fitted Gaussian copula}
+#'   \item{gaussian_bn_fit}{The DAG-constrained Gaussian BN fit used}
 #'   \item{full_correlation_matrix}{The full correlation matrix including Y}
 #' }
 #'
@@ -245,6 +257,7 @@ generate_frugal_outcome_approach_A <- function(X,
                                                 causal_sd = 1,
                                                 rho_Y_Z,
                                                 outcome_family = "gaussian",
+                                                gaussian_bn_fit = NULL,
                                                 seed = NULL) {
   if (!is.null(seed)) set.seed(seed)
 
@@ -266,30 +279,28 @@ generate_frugal_outcome_approach_A <- function(X,
     stop("Length of dag_parents must equal number of confounders")
   }
 
-  # Step 1: Convert Z_original to empirical quantiles for copula fitting
-  Z_ranks <- apply(Z_original, 2, function(col) {
-    rank(col, ties.method = "average") / (N + 1)
-  })
+  # Step 1: Fit DAG-constrained Gaussian BN (Route B) if not provided
+  if (is.null(gaussian_bn_fit)) {
+    gaussian_bn_fit <- fit_reference_gaussian_bn(Z_original, dag_parents)
+  }
 
-  # Step 2: Fit Gaussian copula to Z_original
-  fitted_copula <- fitMVGaussianCopula(dataQuantiles = Z_ranks, method = 'itau')
-
-  # Step 3: Uncondition the conditional ranks to get marginal ranks
+  # Step 2: Uncondition the conditional ranks to get marginal ranks
+  # using DAG-constrained correlation matrix R
   Z_marginal_ranks <- uncondition_conditional_ranks(
     cond_ranks = Z_cond_ranks,
-    R = fitted_copula$correlationMatrix,
+    R = gaussian_bn_fit$R,
     parents = dag_parents
   )
 
-  # Step 4: Build full correlation matrix including Y
+  # Step 3: Build full correlation matrix including Y
   topoOrder <- 1:n_confounders
   fullCorrelationMatrix <- computeFullCorMatrix(
     topoOrder = topoOrder,
-    corMatrixMN = fitted_copula$correlationMatrix,
+    corMatrixMN = gaussian_bn_fit$R,
     vineCorParams = rho_Y_Z
   )
 
-  # Step 5: Generate Y conditional on marginal Z ranks
+  # Step 4: Generate Y conditional on marginal Z ranks
   Z_normal <- qnorm(Z_marginal_ranks)
 
   outcome_model <- multivariate_conditional_mean_and_samples(
@@ -297,21 +308,17 @@ generate_frugal_outcome_approach_A <- function(X,
     R = fullCorrelationMatrix
   )
 
-  # Step 6: Transform to have correct causal margin
+  # Step 5: Transform to have correct causal margin
   Y_ranks <- pnorm(as.vector(outcome_model$generated_samples))
   causal_means <- causal_mean_fn(X)
   Y <- causal_means + causal_sd * qnorm(Y_ranks)
-
-  # Optional: Regenerate Z from the Gaussian copula (for perfect Markov structure)
-  # This would use the marginal ranks with the original quantile functions
-  # For now, we return the original Z
 
   return(list(
     Y = Y,
     Y_ranks = Y_ranks,
     Z_marginal_ranks = Z_marginal_ranks,
     causal_means = causal_means,
-    fitted_copula = fitted_copula,
+    gaussian_bn_fit = gaussian_bn_fit,
     full_correlation_matrix = fullCorrelationMatrix
   ))
 }

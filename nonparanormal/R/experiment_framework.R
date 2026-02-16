@@ -245,6 +245,63 @@ run_independence_tests <- function(data, config) {
 }
 
 
+#' Extract DAG Parent Structure from Experiment Config
+#'
+#' Infers the parent structure from the covariate specification. A covariate
+#' is considered to depend on a parent if its distribution parameters reference
+#' the parent variable name (e.g., shape_formula = "2 + 3*Z1").
+#'
+#' If \code{config$model$dag_parents} is explicitly provided, uses that directly.
+#'
+#' @param config The experiment configuration.
+#'
+#' @return A list of parent indices (one per covariate), or NULL if the DAG
+#'   structure cannot be determined.
+#'
+#' @keywords internal
+extract_dag_parents <- function(config) {
+  # Check for explicit dag_parents in config
+  if (!is.null(config$model$dag_parents)) {
+    return(config$model$dag_parents)
+  }
+
+  covariates <- config$model$covariates
+  if (is.null(covariates)) return(NULL)
+
+  n_cov <- length(covariates)
+  cov_names <- names(covariates)
+  parents <- vector("list", n_cov)
+
+  for (i in seq_along(covariates)) {
+    cov_spec <- covariates[[i]]
+    pa_idx <- integer(0)
+
+    # Check all string-valued parameters for references to other covariates
+    param_strings <- character(0)
+    for (param_name in names(cov_spec)) {
+      val <- cov_spec[[param_name]]
+      if (is.character(val)) {
+        param_strings <- c(param_strings, val)
+      }
+    }
+
+    # Search for references to earlier covariates
+    if (length(param_strings) > 0 && i > 1) {
+      combined <- paste(param_strings, collapse = " ")
+      for (j in seq_len(i - 1)) {
+        if (grepl(cov_names[j], combined, fixed = TRUE)) {
+          pa_idx <- c(pa_idx, j)
+        }
+      }
+    }
+
+    parents[[i]] <- pa_idx
+  }
+
+  return(parents)
+}
+
+
 #' Run a complete experiment
 #'
 #' Main function to run an experiment from a configuration file.
@@ -308,11 +365,25 @@ run_experiment <- function(config_path, verbose = TRUE) {
                            config$copula$rho_Y_Z1_given_Z2,
                            rep(0, ncol(data$covariate_data) - 2))
 
+      # Extract DAG parent structure from config if available
+      dag_parents <- extract_dag_parents(config)
+
+      # Fit DAG-constrained Gaussian BN if parents are available
+      gaussian_bn_fit <- NULL
+      if (!is.null(dag_parents)) {
+        log_message("Fitting DAG-constrained Gaussian BN (Route B)...")
+        gaussian_bn_fit <- fit_reference_gaussian_bn(
+          as.matrix(data$covariate_data), dag_parents
+        )
+      }
+
       outcome_result <- simulateConditionalOutcomeSamples(
         covariate_data = data$covariate_data,
         cond_covariate_ranks = data$conditional_ranks,
         vine_cor_params = vine_cor_params,
-        topoOrder = topoOrder
+        topoOrder = topoOrder,
+        gaussian_bn_fit = gaussian_bn_fit,
+        parents = dag_parents
       )
 
       data$outcome <- qnorm(outcome_result$outcomeRankSamples)

@@ -1,7 +1,7 @@
 # Codebase Map
 
-**Last Updated:** 2026-02-02 23:45
-**Update Trigger:** Major nonparanormal package refactoring completed
+**Last Updated:** 2026-02-14 21:00
+**Update Trigger:** Subsection 2.1 rewrite (no new files, structure unchanged)
 
 ## Directory Structure
 ```
@@ -15,15 +15,21 @@ frugalCopyla/
 │   ├── sections/              # Paper sections
 │   │   ├── abstract.tex
 │   │   ├── introduction.tex
-│   │   ├── background.tex     # Copulas, PCCs, h-functions, frugal param
+│   │   ├── background.tex     # Section 2 (reordered: MSMs → Copulas → PCCs → Uniqueness → BNs)
 │   │   ├── parameterizing.tex # Natural/feasible definitions
 │   │   ├── hybrid_frugal.tex  # Incorrect CDF consequences
 │   │   ├── survival.tex       # Feasibility conditions (main results)
 │   │   ├── nonparanormal.tex  # Nonparanormal approximation + experiments
 │   │   ├── conclusion.tex
-│   │   └── appendix.tex       # Proofs, examples
-│   ├── images/                # Figures
-│   └── appendices/            # Additional appendices
+│   │   └── appendix.tex       # Includes all modular appendices
+│   ├── appendices/            # Modular appendix files (NEW structure)
+│   │   ├── integral_pcc.tex      # App A: Integral PCCs counterexample
+│   │   ├── vine_sampling.tex     # App B: Vine sampling by inversion
+│   │   ├── feasible_examples.tex # App C: Feasible/infeasible examples
+│   │   ├── proofs.tex            # App D: Proofs (h-function, CDF, copula bound)
+│   │   ├── nonparanormal.tex     # App E: Nonparanormal reparameterization
+│   │   └── ci_pvalues.tex        # App F: CI test p-value histograms
+│   └── images/                # Figures
 ├── frugalCopyla/              # Main Python package
 │   ├── __init__.py            # Package init
 │   ├── model.py               # Core model definitions
@@ -95,12 +101,18 @@ frugalCopyla/
 | File | Purpose | Status |
 |------|---------|--------|
 | `Hybrid-Frugal-Paper/main.tex` | Main manuscript | Active |
-| `sections/background.tex` | Copulas, PCCs, Sklar, h-functions | Complete |
+| `sections/background.tex` | Section 2 (MSMs, Copulas, PCCs, Uniqueness, BNs) | Restructured 2026-02-14 |
 | `sections/parameterizing.tex` | Natural/feasible definitions | Complete |
 | `sections/hybrid_frugal.tex` | Consequences of incorrect CDFs | Complete |
 | `sections/survival.tex` | Feasibility conditions (Conditions 1-4) | Complete |
 | `sections/nonparanormal.tex` | Approximation + experiments | Complete |
-| `sections/appendix.tex` | Proofs for all theorems | Complete |
+| `sections/appendix.tex` | Includes all modular appendices | Complete |
+| `appendices/integral_pcc.tex` | App A: Integral PCCs counterexample | Added 2026-02-14 |
+| `appendices/vine_sampling.tex` | App B: Vine sampling by inversion | Modularized 2026-02-13 |
+| `appendices/feasible_examples.tex` | App C: Feasible/infeasible examples | Modularized 2026-02-13 |
+| `appendices/proofs.tex` | App D: Proofs (h-function, CDF, copula bound) | Modularized 2026-02-13 |
+| `appendices/nonparanormal.tex` | App E: Nonparanormal reparameterization | Modularized 2026-02-13 |
+| `appendices/ci_pvalues.tex` | App F: CI test p-value histograms | Modularized 2026-02-13 |
 
 ## Key Files - Code (Python)
 
@@ -239,7 +251,23 @@ frugalCopyla/
 - **Legacy scripts**: Kept in experiments/legacy/ for reference
 - **YAML validation**: No schema validation yet (add if needed)
 
-## Recently Added
+## Recently Modified
+
+### Session 2026-02-14 (Section 2 Restructuring)
+- [x] `sections/background.tex` — Subsection reordering: MSMs → Copulas → PCCs → Uniqueness → BNs (uncommitted)
+- [x] `appendices/integral_pcc.tex` — Removed duplicate topological ordering example (committed 01248ee)
+- [x] `appendices/nonparanormal.tex` — Fixed cross-reference to integral_pcc (committed 01248ee)
+- [x] `sections/appendix.tex` — Added integral_pcc input as App A (committed 01248ee)
+
+### Session 2026-02-13 (Appendix Modularization)
+- [x] `appendices/integral_pcc.tex` — NEW: Integral PCCs counterexample (App A)
+- [x] `appendices/vine_sampling.tex` — NEW: Vine sampling by inversion (App B)
+- [x] `appendices/feasible_examples.tex` — NEW: Feasible/infeasible examples (App C)
+- [x] `appendices/proofs.tex` — NEW: Proofs (h-function, CDF, copula bound) (App D)
+- [x] `appendices/nonparanormal.tex` — NEW: Nonparanormal reparameterization (App E)
+- [x] `appendices/ci_pvalues.tex` — NEW: CI test p-value histograms (App F)
+- [x] `sections/background.tex` — Fixed Remark→remark environment
+- [x] `sections/appendix.tex` — Modularized inputs
 
 ### Session 2026-02-05 (Markov Fix Complete)
 - [x] `nonparanormal/causal_validation_longitudinal.R` — FIXED with BN parameterization, fully verified
