@@ -1,8 +1,19 @@
 #' =============================================================================
-#' Static Clayton Vine Experiment
+#' Static Clayton Vine Experiment (Two-Simulator Design)
 #' =============================================================================
 #'
-#' Validates the nonparanormal approximation for a static model (M_B) with:
+#' Tests whether the nonparanormal approximation preserves conditional
+#' independence when evaluating a Clayton vine outcome copula. Two simulators
+#' disentangle approximation error from intrinsic method behavior:
+#'
+#' - BN:    Real Gamma BN data + Gaussian projection (operational approximation)
+#' - GAUSS: Data from the fitted Gaussian BN SEM (coherent baseline where
+#'          Markov holds exactly)
+#'
+#' Both use the same Clayton vine (theta=2), the same CI tests, and produce
+#' separate CSV + histogram outputs.
+#'
+#' Model specification:
 #' - BN covariate process: Z1 -> Z2 -> Z3 (conditional gamma densities)
 #' - Outcome coupling: Clayton vine (theta=2) linking Y to {Z1, Z3}
 #' - Gaussian h-functions for covariate conditioning edges
@@ -17,20 +28,35 @@
 #'
 #' =============================================================================
 
+# Prevent OpenMP segfaults in GCM/KCI on macOS
+Sys.setenv(OMP_NUM_THREADS = "1")
+
 library(VineCopula)
 library(tidyverse)
 
 # Source nonparanormal infrastructure
 source("nonparanormal.R")
 source("R/gaussian_copula_dag.R")
+source("R/gaussian_copula_dag_sample.R")
 source("R/rank_transform.R")
 
 # Try to load GCM and KCI packages
 gcm_available <- requireNamespace("GeneralisedCovarianceMeasure", quietly = TRUE)
 if (gcm_available) library(GeneralisedCovarianceMeasure)
 
-kci_available <- requireNamespace("CondIndTests", quietly = TRUE)
-if (kci_available) library(CondIndTests)
+# KCI disabled -- too slow at large N (O(n^3)). Using RCoT instead.
+kci_available <- FALSE
+# kci_available <- requireNamespace("CondIndTests", quietly = TRUE)
+# if (kci_available) library(CondIndTests)
+
+# RCoT (fast nonparametric CI test via random Fourier features)
+rcot_available <- requireNamespace("RCIT", quietly = TRUE) &&
+                  requireNamespace("momentchi2", quietly = TRUE)
+if (rcot_available) library(momentchi2)  # RCoT dependency, must be loaded
+
+# Partial correlation fallback when GCM/KCI unavailable or fail
+pcor_available <- requireNamespace("ppcor", quietly = TRUE)
+if (pcor_available) library(ppcor)
 
 # =============================================================================
 # Parameters
@@ -120,22 +146,23 @@ sample_outcome_clayton_vine <- function(tilde_U, theta, rho_Z1_Z3, seed = NULL) 
   tilde_U_Z3 <- tilde_U[, 3]
 
   # Compute u_{Z1|Z3} via Gaussian h-function (covariate conditioning edge)
-  u_Z1_given_Z3 <- BiCopHfunc1(tilde_U_Z1, tilde_U_Z3,
+  # BiCopHfunc2(u1, u2) = C(u1 | u2): first arg conditioned on second
+  u_Z1_given_Z3 <- BiCopHfunc2(tilde_U_Z1, tilde_U_Z3,
                                  family = 1, par = rho_Z1_Z3)
 
   # Innovation for Y
   V <- runif(n)
 
   # Tree 2 inversion: V -> u_{Y|Z3}
-  # h_1(u_{Y|Z3}, u_{Z1|Z3}; Clayton, theta) = V
-  # => u_{Y|Z3} = hinv_1(V, u_{Z1|Z3}; Clayton, theta)
-  u_Y_given_Z3 <- BiCopHinv1(V, u_Z1_given_Z3,
+  # BiCopHinv2(V, u2) inverts hfunc2: samples u1 given u2
+  # Here: sample u_{Y|Z3} given u_{Z1|Z3}
+  u_Y_given_Z3 <- BiCopHinv2(V, u_Z1_given_Z3,
                                family = 3, par = theta)
 
   # Tree 1 inversion: u_{Y|Z3} -> u_Y
-  # h_1(u_Y, u_{Z3}; Clayton, theta) = u_{Y|Z3}
-  # => u_Y = hinv_1(u_{Y|Z3}, u_{Z3}; Clayton, theta)
-  u_Y <- BiCopHinv1(u_Y_given_Z3, tilde_U_Z3,
+  # BiCopHinv2(V, u2) inverts hfunc2: samples u1 given u2
+  # Here: sample u_Y given u_{Z3}
+  u_Y <- BiCopHinv2(u_Y_given_Z3, tilde_U_Z3,
                      family = 3, par = theta)
 
   return(list(
@@ -147,21 +174,133 @@ sample_outcome_clayton_vine <- function(tilde_U, theta, rho_Z1_Z3, seed = NULL) 
 }
 
 # =============================================================================
-# Single Replication
+# Shared Helpers
 # =============================================================================
 
-run_single_static_simulation <- function(sim_id, n = N_SAMPLES, verbose = FALSE) {
-  # Generate BN covariates
+# Tiny helper: ifelse(is.na(p), NA, p < 0.05)
+as0105 <- function(p) ifelse(is.na(p), NA, p < 0.05)
+
+#' Run CI tests on four variables (Z1, Z2, Z3, Y)
+#'
+#' Null: Z2 _|_ Y | (Z1, Z3) -- should not reject
+#' Alt:  Z1 _/|_ Z3 | (Y, Z2) -- should reject (collider)
+run_ci_tests <- function(Z1, Z2, Z3, Y) {
+  cond_null <- cbind(Z1, Z3)
+  cond_alt  <- cbind(Y, Z2)
+
+  # GCM
+  gcm_null_p <- gcm_alt_p <- NA
+  if (gcm_available) {
+    gcm_null_p <- tryCatch(
+      gcm.test(X = Z2, Y = Y, Z = cond_null)$p.value,
+      error = function(e) NA)
+    gcm_alt_p <- tryCatch(
+      gcm.test(X = Z1, Y = Z3, Z = cond_alt)$p.value,
+      error = function(e) NA)
+  }
+
+  # RCoT
+  rcot_null_p <- rcot_alt_p <- NA
+  if (rcot_available) {
+    rcot_null_p <- tryCatch(
+      RCIT::RCoT(Z2, Y, cond_null)$p,
+      error = function(e) NA)
+    rcot_alt_p <- tryCatch(
+      RCIT::RCoT(Z1, Z3, cond_alt)$p,
+      error = function(e) NA)
+  }
+
+  # Partial correlation
+  pcor_null_p <- pcor_alt_p <- NA
+  if (pcor_available) {
+    pcor_null_p <- tryCatch(
+      ppcor::pcor.test(Z2, Y, cbind(Z1, Z3))$p.value,
+      error = function(e) NA)
+    pcor_alt_p <- tryCatch(
+      ppcor::pcor.test(Z1, Z3, cbind(Y, Z2))$p.value,
+      error = function(e) NA)
+  }
+
+  # KCI (disabled)
+  kci_null_p <- kci_alt_p <- NA
+
+  data.frame(
+    gcm_null_p = gcm_null_p, gcm_alt_p = gcm_alt_p,
+    gcm_null_reject = as0105(gcm_null_p), gcm_alt_reject = as0105(gcm_alt_p),
+    kci_null_p = kci_null_p, kci_alt_p = kci_alt_p,
+    kci_null_reject = as0105(kci_null_p), kci_alt_reject = as0105(kci_alt_p),
+    rcot_null_p = rcot_null_p, rcot_alt_p = rcot_alt_p,
+    rcot_null_reject = as0105(rcot_null_p), rcot_alt_reject = as0105(rcot_alt_p),
+    pcor_null_p = pcor_null_p, pcor_alt_p = pcor_alt_p,
+    pcor_null_reject = as0105(pcor_null_p), pcor_alt_reject = as0105(pcor_alt_p),
+    stringsAsFactors = FALSE
+  )
+}
+
+#' Run diagnostics: KS uniformity + delta (BN only)
+#'
+#' @param tilde_U Marginal ranks matrix (n x 3)
+#' @param u_Y Outcome rank vector
+#' @param cond_ranks Conditional ranks matrix (n x 3), or NULL for GAUSS variant
+run_diagnostics <- function(tilde_U, u_Y, cond_ranks = NULL) {
+  ks_Z1_p <- ks.test(tilde_U[, 1], "punif")$p.value
+  ks_Z2_p <- ks.test(tilde_U[, 2], "punif")$p.value
+  ks_Z3_p <- ks.test(tilde_U[, 3], "punif")$p.value
+  ks_Y_p  <- ks.test(u_Y, "punif")$p.value
+
+  if (!is.null(cond_ranks)) {
+    # BN variant: compute deltas
+    delta_Z1 <- tilde_U[, 1] - cond_ranks[, 1]
+    delta_Z2 <- tilde_U[, 2] - cond_ranks[, 2]
+    delta_Z3 <- tilde_U[, 3] - cond_ranks[, 3]
+
+    tail_Z2 <- cond_ranks[, 2] <= 0.05 | cond_ranks[, 2] >= 0.95
+    tail_Z3 <- cond_ranks[, 3] <= 0.05 | cond_ranks[, 3] >= 0.95
+    mid_Z2 <- !tail_Z2
+    mid_Z3 <- !tail_Z3
+
+    delta_Z1_mean_abs <- mean(abs(delta_Z1))
+    delta_Z2_mean_abs <- mean(abs(delta_Z2))
+    delta_Z3_mean_abs <- mean(abs(delta_Z3))
+    delta_Z2_mean_abs_tail <- ifelse(sum(tail_Z2) > 0, mean(abs(delta_Z2[tail_Z2])), NA)
+    delta_Z3_mean_abs_tail <- ifelse(sum(tail_Z3) > 0, mean(abs(delta_Z3[tail_Z3])), NA)
+    delta_Z2_mean_abs_mid <- ifelse(sum(mid_Z2) > 0, mean(abs(delta_Z2[mid_Z2])), NA)
+    delta_Z3_mean_abs_mid <- ifelse(sum(mid_Z3) > 0, mean(abs(delta_Z3[mid_Z3])), NA)
+  } else {
+    # GAUSS variant: no delta available
+    delta_Z1_mean_abs <- delta_Z2_mean_abs <- delta_Z3_mean_abs <- NA
+    delta_Z2_mean_abs_tail <- delta_Z3_mean_abs_tail <- NA
+    delta_Z2_mean_abs_mid <- delta_Z3_mean_abs_mid <- NA
+  }
+
+  data.frame(
+    ks_Z1_p = ks_Z1_p, ks_Z2_p = ks_Z2_p,
+    ks_Z3_p = ks_Z3_p, ks_Y_p = ks_Y_p,
+    delta_Z1_mean_abs = delta_Z1_mean_abs,
+    delta_Z2_mean_abs = delta_Z2_mean_abs,
+    delta_Z3_mean_abs = delta_Z3_mean_abs,
+    delta_Z2_mean_abs_tail = delta_Z2_mean_abs_tail,
+    delta_Z3_mean_abs_tail = delta_Z3_mean_abs_tail,
+    delta_Z2_mean_abs_mid = delta_Z2_mean_abs_mid,
+    delta_Z3_mean_abs_mid = delta_Z3_mean_abs_mid,
+    stringsAsFactors = FALSE
+  )
+}
+
+# =============================================================================
+# Single Replication Functions
+# =============================================================================
+
+#' BN variant: real Gamma data + Gaussian projection
+run_single_bn_simulation <- function(sim_id, n = N_SAMPLES) {
   bn_data <- generate_bn_covariates(n, seed = SEED_BASE + sim_id)
 
-  # Uncondition conditional ranks to marginal ranks
   tilde_U <- uncondition_conditional_ranks(
     cond_ranks = bn_data$cond_ranks,
     R = R_cov,
     parents = DAG_PARENTS
   )
 
-  # Sample outcome via Clayton vine
   outcome <- sample_outcome_clayton_vine(
     tilde_U = tilde_U,
     theta = CLAYTON_THETA,
@@ -170,117 +309,199 @@ run_single_static_simulation <- function(sim_id, n = N_SAMPLES, verbose = FALSE)
   )
 
   u_Y <- outcome$u_Y
-  # Transform to observed scale (standard normal causal margin for simplicity)
   Y <- qnorm(u_Y)
 
-  # ----- Diagnostics -----
+  # CI tests use observed Gamma Z
+  ci <- run_ci_tests(bn_data$Z1, bn_data$Z2, bn_data$Z3, Y)
+  diag_df <- run_diagnostics(tilde_U, u_Y, cond_ranks = bn_data$cond_ranks)
 
-  # 1. CI tests
-  # Null: Z2 _|_ Y | (Z1, Z3) -- should not reject
-  # Alt:  Z1 _/|_ Z3 | (Y, Z2) -- should reject (collider)
-  cond_null <- cbind(bn_data$Z1, bn_data$Z3)
-  cond_alt <- cbind(Y, bn_data$Z2)
+  cbind(
+    data.frame(replication_id = sim_id, N = n, simulator = "BN",
+               stringsAsFactors = FALSE),
+    ci, diag_df
+  )
+}
 
-  # GCM tests
-  gcm_null_p <- NA
-  gcm_alt_p <- NA
-  if (gcm_available) {
-    gcm_null <- tryCatch(
-      gcm.test(X = bn_data$Z2, Y = Y, Z = cond_null),
-      error = function(e) list(p.value = NA)
-    )
-    gcm_null_p <- gcm_null$p.value
+#' GAUSS variant: data from the fitted Gaussian BN SEM
+run_single_gauss_simulation <- function(sim_id, n = N_SAMPLES) {
+  gauss <- simulate_gaussian_bn_sem(n, gaussian_bn_fit,
+                                     seed = SEED_BASE + sim_id)
+  tilde_U <- gauss$tilde_U
 
-    gcm_alt <- tryCatch(
-      gcm.test(X = bn_data$Z1, Y = bn_data$Z3, Z = cond_alt),
-      error = function(e) list(p.value = NA)
-    )
-    gcm_alt_p <- gcm_alt$p.value
-  }
-
-  # KCI tests
-  kci_null_p <- NA
-  kci_alt_p <- NA
-  if (kci_available) {
-    kci_null <- tryCatch(
-      CondIndTests::KCI(bn_data$Z2, Y, cond_null,
-                        GP = TRUE, width = 0, alpha = 0.05),
-      error = function(e) list(pvalue = NA)
-    )
-    kci_null_p <- kci_null$pvalue
-
-    kci_alt <- tryCatch(
-      CondIndTests::KCI(bn_data$Z1, bn_data$Z3, cond_alt,
-                        GP = TRUE, width = 0, alpha = 0.05),
-      error = function(e) list(pvalue = NA)
-    )
-    kci_alt_p <- kci_alt$pvalue
-  }
-
-  # 2. Rank uniformity (KS tests)
-  ks_Z1_p <- ks.test(tilde_U[, 1], "punif")$p.value
-  ks_Z2_p <- ks.test(tilde_U[, 2], "punif")$p.value
-  ks_Z3_p <- ks.test(tilde_U[, 3], "punif")$p.value
-  ks_Y_p  <- ks.test(u_Y, "punif")$p.value
-
-  # 3. Delta diagnostics: Delta_d = tilde_U_{Z_d} - U_{Z_d|pa(Z_d)}
-  delta_Z1 <- tilde_U[, 1] - bn_data$cond_ranks[, 1]  # root: should be ~0
-  delta_Z2 <- tilde_U[, 2] - bn_data$cond_ranks[, 2]
-  delta_Z3 <- tilde_U[, 3] - bn_data$cond_ranks[, 3]
-
-  # Tail indicators: U_{Z_d|pa(Z_d)} in [0, 0.05] or [0.95, 1]
-  tail_Z2 <- bn_data$cond_ranks[, 2] <= 0.05 | bn_data$cond_ranks[, 2] >= 0.95
-  tail_Z3 <- bn_data$cond_ranks[, 3] <= 0.05 | bn_data$cond_ranks[, 3] >= 0.95
-  mid_Z2 <- !tail_Z2
-  mid_Z3 <- !tail_Z3
-
-  results <- data.frame(
-    replication_id = sim_id,
-    N = n,
-    # GCM
-    gcm_null_p = gcm_null_p,
-    gcm_alt_p = gcm_alt_p,
-    gcm_null_reject = ifelse(is.na(gcm_null_p), NA, gcm_null_p < 0.05),
-    gcm_alt_reject = ifelse(is.na(gcm_alt_p), NA, gcm_alt_p < 0.05),
-    # KCI
-    kci_null_p = kci_null_p,
-    kci_alt_p = kci_alt_p,
-    kci_null_reject = ifelse(is.na(kci_null_p), NA, kci_null_p < 0.05),
-    kci_alt_reject = ifelse(is.na(kci_alt_p), NA, kci_alt_p < 0.05),
-    # Rank uniformity
-    ks_Z1_p = ks_Z1_p,
-    ks_Z2_p = ks_Z2_p,
-    ks_Z3_p = ks_Z3_p,
-    ks_Y_p = ks_Y_p,
-    # Delta overall
-    delta_Z1_mean_abs = mean(abs(delta_Z1)),
-    delta_Z2_mean_abs = mean(abs(delta_Z2)),
-    delta_Z3_mean_abs = mean(abs(delta_Z3)),
-    # Delta tails
-    delta_Z2_mean_abs_tail = ifelse(sum(tail_Z2) > 0, mean(abs(delta_Z2[tail_Z2])), NA),
-    delta_Z3_mean_abs_tail = ifelse(sum(tail_Z3) > 0, mean(abs(delta_Z3[tail_Z3])), NA),
-    # Delta middle
-    delta_Z2_mean_abs_mid = ifelse(sum(mid_Z2) > 0, mean(abs(delta_Z2[mid_Z2])), NA),
-    delta_Z3_mean_abs_mid = ifelse(sum(mid_Z3) > 0, mean(abs(delta_Z3[mid_Z3])), NA),
-    stringsAsFactors = FALSE
+  outcome <- sample_outcome_clayton_vine(
+    tilde_U = tilde_U,
+    theta = CLAYTON_THETA,
+    rho_Z1_Z3 = rho_Z1_Z3,
+    seed = SEED_BASE * 1000 + sim_id
   )
 
-  if (verbose) {
-    cat(sprintf("Sim %d: GCM null p=%.3f, alt p=%.3f | KS Y p=%.3f\n",
-                sim_id, gcm_null_p, gcm_alt_p, ks_Y_p))
-  }
+  u_Y <- outcome$u_Y
+  Y <- qnorm(u_Y)
 
-  return(results)
+  # CI tests use latent Gaussian scores (avoids boundary effects)
+  ci <- run_ci_tests(gauss$Q_tilde_Z[, 1], gauss$Q_tilde_Z[, 2],
+                     gauss$Q_tilde_Z[, 3], Y)
+  diag_df <- run_diagnostics(tilde_U, u_Y, cond_ranks = NULL)
+
+  cbind(
+    data.frame(replication_id = sim_id, N = n, simulator = "GAUSS",
+               stringsAsFactors = FALSE),
+    ci, diag_df
+  )
 }
 
 # =============================================================================
-# Verification: Single Large Sample
+# Summary & Histogram Helpers
+# =============================================================================
+
+#' Print summary for one simulator variant
+print_summary <- function(results_df, sim_type) {
+  cat(sprintf("\n--- %s Simulator ---\n", sim_type))
+
+  # GCM
+  if (gcm_available && sum(!is.na(results_df$gcm_null_p)) > 0) {
+    gcm_null_ps <- results_df$gcm_null_p[!is.na(results_df$gcm_null_p)]
+    gcm_alt_ps <- results_df$gcm_alt_p[!is.na(results_df$gcm_alt_p)]
+    ks_gcm_null <- ks.test(gcm_null_ps, "punif")
+    gcm_alt_power <- mean(gcm_alt_ps < 0.05, na.rm = TRUE)
+    cat("GCM CI Tests:\n")
+    cat(sprintf("  Null (Z2 _|_ Y | Z1,Z3): KS p = %.4f\n", ks_gcm_null$p.value))
+    cat(sprintf("  Alt  (Z1 _/|_ Z3 | Y,Z2): Power = %.4f\n", gcm_alt_power))
+  } else {
+    cat("GCM tests: not available\n")
+  }
+
+  # KCI
+  if (kci_available && sum(!is.na(results_df$kci_null_p)) > 0) {
+    kci_null_ps <- results_df$kci_null_p[!is.na(results_df$kci_null_p)]
+    kci_alt_ps <- results_df$kci_alt_p[!is.na(results_df$kci_alt_p)]
+    ks_kci_null <- ks.test(kci_null_ps, "punif")
+    kci_alt_power <- mean(kci_alt_ps < 0.05, na.rm = TRUE)
+    cat("KCI CI Tests:\n")
+    cat(sprintf("  Null: KS p = %.4f\n", ks_kci_null$p.value))
+    cat(sprintf("  Alt:  Power = %.4f\n", kci_alt_power))
+  }
+
+  # RCoT
+  if (rcot_available && sum(!is.na(results_df$rcot_null_p)) > 0) {
+    rcot_null_ps <- results_df$rcot_null_p[!is.na(results_df$rcot_null_p)]
+    rcot_alt_ps <- results_df$rcot_alt_p[!is.na(results_df$rcot_alt_p)]
+    ks_rcot_null <- ks.test(rcot_null_ps, "punif")
+    rcot_alt_power <- mean(rcot_alt_ps < 0.05, na.rm = TRUE)
+    cat("RCoT CI Tests:\n")
+    cat(sprintf("  Null: KS p = %.4f\n", ks_rcot_null$p.value))
+    cat(sprintf("  Alt:  Power = %.4f\n", rcot_alt_power))
+  } else {
+    cat("RCoT tests: not available\n")
+  }
+
+  # Partial correlation
+  if (pcor_available && sum(!is.na(results_df$pcor_null_p)) > 0) {
+    pcor_null_ps <- results_df$pcor_null_p[!is.na(results_df$pcor_null_p)]
+    pcor_alt_ps <- results_df$pcor_alt_p[!is.na(results_df$pcor_alt_p)]
+    ks_pcor_null <- ks.test(pcor_null_ps, "punif")
+    pcor_alt_power <- mean(pcor_alt_ps < 0.05, na.rm = TRUE)
+    cat("Partial Correlation Tests:\n")
+    cat(sprintf("  Null: KS p = %.4f\n", ks_pcor_null$p.value))
+    cat(sprintf("  Alt:  Power = %.4f\n", pcor_alt_power))
+  } else {
+    cat("Partial correlation tests: not available\n")
+  }
+
+  # Rank uniformity
+  cat("Rank Uniformity (KS test, %% passing at alpha=0.05):\n")
+  cat(sprintf("  tilde_U_Z1: %.1f%%\n", mean(results_df$ks_Z1_p > 0.05) * 100))
+  cat(sprintf("  tilde_U_Z2: %.1f%%\n", mean(results_df$ks_Z2_p > 0.05) * 100))
+  cat(sprintf("  tilde_U_Z3: %.1f%%\n", mean(results_df$ks_Z3_p > 0.05) * 100))
+  cat(sprintf("  u_Y:        %.1f%%\n", mean(results_df$ks_Y_p > 0.05) * 100))
+
+  # Delta diagnostics (BN only)
+  if (sim_type == "BN" && !all(is.na(results_df$delta_Z1_mean_abs))) {
+    cat("Delta Diagnostics (mean |Delta_d|):\n")
+    cat(sprintf("  Z1 (root):  overall = %.4f\n",
+                mean(results_df$delta_Z1_mean_abs)))
+    cat(sprintf("  Z2:         overall = %.4f, tail = %.4f, mid = %.4f\n",
+                mean(results_df$delta_Z2_mean_abs),
+                mean(results_df$delta_Z2_mean_abs_tail, na.rm = TRUE),
+                mean(results_df$delta_Z2_mean_abs_mid, na.rm = TRUE)))
+    cat(sprintf("  Z3:         overall = %.4f, tail = %.4f, mid = %.4f\n",
+                mean(results_df$delta_Z3_mean_abs),
+                mean(results_df$delta_Z3_mean_abs_tail, na.rm = TRUE),
+                mean(results_df$delta_Z3_mean_abs_mid, na.rm = TRUE)))
+  }
+}
+
+#' Save p-value histogram for one simulator variant
+save_pvalue_histogram <- function(results_df, sim_type) {
+  pval_data <- data.frame()
+
+  if (gcm_available && sum(!is.na(results_df$gcm_null_p)) > 0) {
+    pval_data <- rbind(pval_data, data.frame(
+      test = "GCM", hypothesis = "Null: Z2 _|_ Y | (Z1,Z3)",
+      p_value = results_df$gcm_null_p[!is.na(results_df$gcm_null_p)]))
+    pval_data <- rbind(pval_data, data.frame(
+      test = "GCM", hypothesis = "Alt: Z1 _/|_ Z3 | (Y,Z2)",
+      p_value = results_df$gcm_alt_p[!is.na(results_df$gcm_alt_p)]))
+  }
+
+  if (kci_available && sum(!is.na(results_df$kci_null_p)) > 0) {
+    pval_data <- rbind(pval_data, data.frame(
+      test = "KCI", hypothesis = "Null: Z2 _|_ Y | (Z1,Z3)",
+      p_value = results_df$kci_null_p[!is.na(results_df$kci_null_p)]))
+    pval_data <- rbind(pval_data, data.frame(
+      test = "KCI", hypothesis = "Alt: Z1 _/|_ Z3 | (Y,Z2)",
+      p_value = results_df$kci_alt_p[!is.na(results_df$kci_alt_p)]))
+  }
+
+  if (rcot_available && sum(!is.na(results_df$rcot_null_p)) > 0) {
+    pval_data <- rbind(pval_data, data.frame(
+      test = "RCoT", hypothesis = "Null: Z2 _|_ Y | (Z1,Z3)",
+      p_value = results_df$rcot_null_p[!is.na(results_df$rcot_null_p)]))
+    pval_data <- rbind(pval_data, data.frame(
+      test = "RCoT", hypothesis = "Alt: Z1 _/|_ Z3 | (Y,Z2)",
+      p_value = results_df$rcot_alt_p[!is.na(results_df$rcot_alt_p)]))
+  }
+
+  if (pcor_available && sum(!is.na(results_df$pcor_null_p)) > 0) {
+    pval_data <- rbind(pval_data, data.frame(
+      test = "Partial Cor", hypothesis = "Null: Z2 _|_ Y | (Z1,Z3)",
+      p_value = results_df$pcor_null_p[!is.na(results_df$pcor_null_p)]))
+    pval_data <- rbind(pval_data, data.frame(
+      test = "Partial Cor", hypothesis = "Alt: Z1 _/|_ Z3 | (Y,Z2)",
+      p_value = results_df$pcor_alt_p[!is.na(results_df$pcor_alt_p)]))
+  }
+
+  if (nrow(pval_data) > 0) {
+    n_reps <- nrow(results_df)
+    p_hist <- ggplot(pval_data, aes(x = p_value)) +
+      geom_histogram(breaks = seq(0, 1, by = 0.05),
+                     fill = "steelblue", colour = "white") +
+      geom_hline(yintercept = n_reps * 0.05,
+                 linetype = "dashed", colour = "red") +
+      facet_grid(test ~ hypothesis, scales = "free_y") +
+      labs(x = "p-value", y = "Count",
+           title = sprintf("%s: CI Test p-values (N=%d, %d reps)",
+                           sim_type, N_SAMPLES, N_SIMS),
+           subtitle = "Null should be uniform; alternative near 0") +
+      theme_minimal() +
+      theme(strip.text = element_text(size = 9))
+
+    fname <- sprintf("results/figures/static_clayton_pvals_%s.pdf", sim_type)
+    ggsave(fname, p_hist, width = 8, height = 8)
+    cat(sprintf("  Histogram saved to %s\n", fname))
+  }
+}
+
+# =============================================================================
+# Verification: Single Large Sample (Both Variants)
 # =============================================================================
 
 cat("=============================================================================\n")
 cat("Verification: Single large sample (N=50000)\n")
 cat("=============================================================================\n")
 
+# --- BN verification ---
+cat("\n--- BN variant ---\n")
 set.seed(777)
 verify_data <- generate_bn_covariates(50000, seed = 777)
 verify_tilde_U <- uncondition_conditional_ranks(
@@ -290,165 +511,148 @@ verify_outcome <- sample_outcome_clayton_vine(
   verify_tilde_U, CLAYTON_THETA, rho_Z1_Z3, seed = 778
 )
 
-# Fit bivariate Clayton to (u_Y, tilde_U_Z3) - should recover theta ~ 2
 fit_tree1 <- BiCopEst(verify_outcome$u_Y, verify_tilde_U[, 3], family = 3)
 cat(sprintf("  Recovered Clayton theta (Tree 1, Y-Z3): %.3f (target: %.1f)\n",
             fit_tree1$par, CLAYTON_THETA))
 
-# Fit bivariate Clayton to (u_{Y|Z3}, u_{Z1|Z3}) - should recover theta ~ 2
-verify_u_Y_given_Z3 <- BiCopHfunc1(
+verify_u_Y_given_Z3 <- BiCopHfunc2(
   verify_outcome$u_Y, verify_tilde_U[, 3], family = 3, par = CLAYTON_THETA
 )
-verify_u_Z1_given_Z3 <- BiCopHfunc1(
+verify_u_Z1_given_Z3 <- BiCopHfunc2(
   verify_tilde_U[, 1], verify_tilde_U[, 3], family = 1, par = rho_Z1_Z3
 )
 fit_tree2 <- BiCopEst(verify_u_Y_given_Z3, verify_u_Z1_given_Z3, family = 3)
 cat(sprintf("  Recovered Clayton theta (Tree 2, Y-Z1|Z3): %.3f (target: %.1f)\n",
             fit_tree2$par, CLAYTON_THETA))
 
-# Rank uniformity check
 ks_verify_Y <- ks.test(verify_outcome$u_Y, "punif")
 cat(sprintf("  KS test for u_Y uniformity: p = %.4f\n", ks_verify_Y$p.value))
 
+# --- GAUSS verification ---
+cat("\n--- GAUSS variant ---\n")
+gauss_verify <- simulate_gaussian_bn_sem(50000, gaussian_bn_fit, seed = 779)
+
+# Sanity: empirical cor should match fit$R
+cor_diff <- max(abs(cor(gauss_verify$Q_tilde_Z) - R_cov))
+cat(sprintf("  GAUSS cor vs fit$R max diff: %.6f\n", cor_diff))
+
+gauss_outcome <- sample_outcome_clayton_vine(
+  gauss_verify$tilde_U, CLAYTON_THETA, rho_Z1_Z3, seed = 780
+)
+
+fit_tree1_g <- BiCopEst(gauss_outcome$u_Y, gauss_verify$tilde_U[, 3], family = 3)
+cat(sprintf("  Recovered Clayton theta (Tree 1, Y-Z3): %.3f (target: %.1f)\n",
+            fit_tree1_g$par, CLAYTON_THETA))
+
+gauss_u_Y_given_Z3 <- BiCopHfunc2(
+  gauss_outcome$u_Y, gauss_verify$tilde_U[, 3], family = 3, par = CLAYTON_THETA
+)
+gauss_u_Z1_given_Z3 <- BiCopHfunc2(
+  gauss_verify$tilde_U[, 1], gauss_verify$tilde_U[, 3],
+  family = 1, par = rho_Z1_Z3
+)
+fit_tree2_g <- BiCopEst(gauss_u_Y_given_Z3, gauss_u_Z1_given_Z3, family = 3)
+cat(sprintf("  Recovered Clayton theta (Tree 2, Y-Z1|Z3): %.3f (target: %.1f)\n",
+            fit_tree2_g$par, CLAYTON_THETA))
+
+ks_verify_Y_g <- ks.test(gauss_outcome$u_Y, "punif")
+cat(sprintf("  KS test for u_Y uniformity: p = %.4f\n", ks_verify_Y_g$p.value))
+
+# KS for tilde_U columns
+for (j in 1:3) {
+  ks_j <- ks.test(gauss_verify$tilde_U[, j], "punif")
+  cat(sprintf("  KS test for tilde_U[,%d] uniformity: p = %.4f\n", j, ks_j$p.value))
+}
+
 cat("\n")
 
 # =============================================================================
-# Run All Simulations
-# =============================================================================
-
-cat("=============================================================================\n")
-cat("Static Clayton Vine Experiment (Model M_B)\n")
-cat("=============================================================================\n")
-cat(sprintf("Sample size: %d\n", N_SAMPLES))
-cat(sprintf("Number of replications: %d\n", N_SIMS))
-cat(sprintf("Clayton theta: %.1f\n", CLAYTON_THETA))
-cat(sprintf("GCM available: %s\n", gcm_available))
-cat(sprintf("KCI available: %s\n", kci_available))
-cat("=============================================================================\n\n")
-
-cat("Running simulations...\n")
-pb <- txtProgressBar(min = 0, max = N_SIMS, style = 3)
-
-results_list <- vector("list", N_SIMS)
-for (i in 1:N_SIMS) {
-  results_list[[i]] <- run_single_static_simulation(i, verbose = FALSE)
-  setTxtProgressBar(pb, i)
-}
-close(pb)
-
-results_df <- do.call(rbind, results_list)
-
-# =============================================================================
-# Summary
-# =============================================================================
-
-cat("\n=============================================================================\n")
-cat("RESULTS SUMMARY\n")
-cat("=============================================================================\n\n")
-
-# GCM diagnostics
-if (gcm_available && sum(!is.na(results_df$gcm_null_p)) > 0) {
-  gcm_null_ps <- results_df$gcm_null_p[!is.na(results_df$gcm_null_p)]
-  gcm_alt_ps <- results_df$gcm_alt_p[!is.na(results_df$gcm_alt_p)]
-
-  ks_gcm_null <- ks.test(gcm_null_ps, "punif")
-  gcm_alt_power <- mean(gcm_alt_ps < 0.05, na.rm = TRUE)
-
-  cat("GCM Conditional Independence Tests:\n")
-  cat(sprintf("  Null (Z2 _|_ Y | Z1,Z3): KS p-value for uniformity = %.4f\n",
-              ks_gcm_null$p.value))
-  cat(sprintf("  Alt  (Z1 _/|_ Z3 | Y,Z2): Power (rejection rate) = %.4f\n",
-              gcm_alt_power))
-  cat("\n")
-} else {
-  cat("GCM tests: not available\n\n")
-}
-
-# KCI diagnostics
-if (kci_available && sum(!is.na(results_df$kci_null_p)) > 0) {
-  kci_null_ps <- results_df$kci_null_p[!is.na(results_df$kci_null_p)]
-  kci_alt_ps <- results_df$kci_alt_p[!is.na(results_df$kci_alt_p)]
-
-  ks_kci_null <- ks.test(kci_null_ps, "punif")
-  kci_alt_power <- mean(kci_alt_ps < 0.05, na.rm = TRUE)
-
-  cat("KCI Conditional Independence Tests:\n")
-  cat(sprintf("  Null (Z2 _|_ Y | Z1,Z3): KS p-value for uniformity = %.4f\n",
-              ks_kci_null$p.value))
-  cat(sprintf("  Alt  (Z1 _/|_ Z3 | Y,Z2): Power (rejection rate) = %.4f\n",
-              kci_alt_power))
-  cat("\n")
-}
-
-# Rank uniformity
-cat("Rank Uniformity (KS test, % passing at alpha=0.05):\n")
-cat(sprintf("  tilde_U_Z1: %.1f%%\n", mean(results_df$ks_Z1_p > 0.05) * 100))
-cat(sprintf("  tilde_U_Z2: %.1f%%\n", mean(results_df$ks_Z2_p > 0.05) * 100))
-cat(sprintf("  tilde_U_Z3: %.1f%%\n", mean(results_df$ks_Z3_p > 0.05) * 100))
-cat(sprintf("  u_Y:        %.1f%%\n", mean(results_df$ks_Y_p > 0.05) * 100))
-cat("\n")
-
-# Delta diagnostics
-cat("Delta Diagnostics (mean |Delta_d|):\n")
-cat(sprintf("  Z1 (root):  overall = %.4f\n", mean(results_df$delta_Z1_mean_abs)))
-cat(sprintf("  Z2:         overall = %.4f, tail = %.4f, mid = %.4f\n",
-            mean(results_df$delta_Z2_mean_abs),
-            mean(results_df$delta_Z2_mean_abs_tail, na.rm = TRUE),
-            mean(results_df$delta_Z2_mean_abs_mid, na.rm = TRUE)))
-cat(sprintf("  Z3:         overall = %.4f, tail = %.4f, mid = %.4f\n",
-            mean(results_df$delta_Z3_mean_abs),
-            mean(results_df$delta_Z3_mean_abs_tail, na.rm = TRUE),
-            mean(results_df$delta_Z3_mean_abs_mid, na.rm = TRUE)))
-cat("\n")
-
-# =============================================================================
-# Save Results
+# Run All Simulations (Both Variants)
 # =============================================================================
 
 if (!dir.exists("results")) dir.create("results", recursive = TRUE)
+if (!dir.exists("results/figures")) dir.create("results/figures", recursive = TRUE)
 
-write.csv(results_df, "results/static_clayton_vine_results.csv", row.names = FALSE)
-cat("Results saved to results/static_clayton_vine_results.csv\n")
+for (sim_type in c("BN", "GAUSS")) {
+  cat("=============================================================================\n")
+  cat(sprintf("Running %s simulator (%d reps, N=%d)\n", sim_type, N_SIMS, N_SAMPLES))
+  cat(sprintf("GCM: %s | RCoT: %s | pcor: %s\n",
+              gcm_available, rcot_available, pcor_available))
+  cat("=============================================================================\n")
+
+  pb <- txtProgressBar(min = 0, max = N_SIMS, style = 3)
+  results_list <- vector("list", N_SIMS)
+
+  run_fn <- if (sim_type == "BN") run_single_bn_simulation else run_single_gauss_simulation
+
+  for (i in 1:N_SIMS) {
+    results_list[[i]] <- run_fn(i, n = N_SAMPLES)
+    setTxtProgressBar(pb, i)
+  }
+  close(pb)
+
+  results_df <- do.call(rbind, results_list)
+
+  # Print summary
+  print_summary(results_df, sim_type)
+
+  # Save CSV
+  csv_path <- sprintf("results/static_clayton_%s.csv", sim_type)
+  write.csv(results_df, csv_path, row.names = FALSE)
+  cat(sprintf("\n  Results saved to %s\n", csv_path))
+
+  # Save histogram
+  save_pvalue_histogram(results_df, sim_type)
+}
 
 # =============================================================================
-# Verification Checklist
+# Verification Checklist (both variants)
 # =============================================================================
 
 cat("\n=============================================================================\n")
 cat("VERIFICATION CHECKLIST\n")
 cat("=============================================================================\n")
 
-if (gcm_available && sum(!is.na(results_df$gcm_null_p)) > 0) {
-  cat(sprintf("[%s] GCM null p-values uniform (KS p = %.3f > 0.05)\n",
-              ifelse(ks_gcm_null$p.value > 0.05, "PASS", "WARN"),
-              ks_gcm_null$p.value))
-  cat(sprintf("[%s] GCM alt power > 0.8 (power = %.3f)\n",
-              ifelse(gcm_alt_power > 0.8, "PASS", "WARN"),
-              gcm_alt_power))
+for (sim_type in c("BN", "GAUSS")) {
+  csv_path <- sprintf("results/static_clayton_%s.csv", sim_type)
+  if (!file.exists(csv_path)) next
+  res <- read.csv(csv_path)
+
+  cat(sprintf("\n--- %s ---\n", sim_type))
+
+  if (gcm_available && sum(!is.na(res$gcm_null_p)) > 0) {
+    gcm_null_ps <- res$gcm_null_p[!is.na(res$gcm_null_p)]
+    gcm_alt_ps <- res$gcm_alt_p[!is.na(res$gcm_alt_p)]
+    ks_p <- ks.test(gcm_null_ps, "punif")$p.value
+    power <- mean(gcm_alt_ps < 0.05, na.rm = TRUE)
+    cat(sprintf("[%s] GCM null uniform (KS p = %.3f > 0.05)\n",
+                ifelse(ks_p > 0.05, "PASS", "WARN"), ks_p))
+    cat(sprintf("[%s] GCM alt power > 0.8 (power = %.3f)\n",
+                ifelse(power > 0.8, "PASS", "WARN"), power))
+  }
+
+  rank_pass_rate <- mean(c(
+    res$ks_Z1_p > 0.05, res$ks_Z2_p > 0.05,
+    res$ks_Z3_p > 0.05, res$ks_Y_p > 0.05
+  ))
+  cat(sprintf("[%s] Rank uniformity > 90%% (%.1f%%)\n",
+              ifelse(rank_pass_rate > 0.9, "PASS", "WARN"),
+              rank_pass_rate * 100))
+
+  if (sim_type == "BN" && !all(is.na(res$delta_Z2_mean_abs_tail))) {
+    tail_gt_mid_Z2 <- mean(res$delta_Z2_mean_abs_tail, na.rm = TRUE) >
+                      mean(res$delta_Z2_mean_abs_mid, na.rm = TRUE)
+    tail_gt_mid_Z3 <- mean(res$delta_Z3_mean_abs_tail, na.rm = TRUE) >
+                      mean(res$delta_Z3_mean_abs_mid, na.rm = TRUE)
+    cat(sprintf("[%s] Delta tails > mid for Z2: %.4f > %.4f\n",
+                ifelse(tail_gt_mid_Z2, "PASS", "WARN"),
+                mean(res$delta_Z2_mean_abs_tail, na.rm = TRUE),
+                mean(res$delta_Z2_mean_abs_mid, na.rm = TRUE)))
+    cat(sprintf("[%s] Delta tails > mid for Z3: %.4f > %.4f\n",
+                ifelse(tail_gt_mid_Z3, "PASS", "WARN"),
+                mean(res$delta_Z3_mean_abs_tail, na.rm = TRUE),
+                mean(res$delta_Z3_mean_abs_mid, na.rm = TRUE)))
+  }
 }
 
-rank_pass_rate <- mean(c(
-  results_df$ks_Z1_p > 0.05,
-  results_df$ks_Z2_p > 0.05,
-  results_df$ks_Z3_p > 0.05,
-  results_df$ks_Y_p > 0.05
-))
-cat(sprintf("[%s] Rank uniformity > 90%% (%.1f%%)\n",
-            ifelse(rank_pass_rate > 0.9, "PASS", "WARN"),
-            rank_pass_rate * 100))
-
-# Delta tails > delta middle for non-root covariates
-tail_gt_mid_Z2 <- mean(results_df$delta_Z2_mean_abs_tail, na.rm = TRUE) >
-                  mean(results_df$delta_Z2_mean_abs_mid, na.rm = TRUE)
-tail_gt_mid_Z3 <- mean(results_df$delta_Z3_mean_abs_tail, na.rm = TRUE) >
-                  mean(results_df$delta_Z3_mean_abs_mid, na.rm = TRUE)
-cat(sprintf("[%s] Delta tails > mid for Z2: %.4f > %.4f\n",
-            ifelse(tail_gt_mid_Z2, "PASS", "WARN"),
-            mean(results_df$delta_Z2_mean_abs_tail, na.rm = TRUE),
-            mean(results_df$delta_Z2_mean_abs_mid, na.rm = TRUE)))
-cat(sprintf("[%s] Delta tails > mid for Z3: %.4f > %.4f\n",
-            ifelse(tail_gt_mid_Z3, "PASS", "WARN"),
-            mean(results_df$delta_Z3_mean_abs_tail, na.rm = TRUE),
-            mean(results_df$delta_Z3_mean_abs_mid, na.rm = TRUE)))
-
-cat("=============================================================================\n")
+cat("\n=============================================================================\n")
