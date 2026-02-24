@@ -25,9 +25,18 @@
 #'
 #' =============================================================================
 
+Sys.setenv(OMP_NUM_THREADS = "1")  # prevent OpenMP segfaults
+
 library(tidyverse)
 library(ggplot2)
 library(ppcor)
+
+# RCoT (fast nonparametric CI test via random Fourier features)
+rcot_available <- requireNamespace("RCIT", quietly = TRUE) &&
+                  requireNamespace("momentchi2", quietly = TRUE)
+if (rcot_available) {
+  library(momentchi2)  # RCIT dependency, must load explicitly
+}
 
 # Source the nonparanormal functions
 source("nonparanormal.R")
@@ -538,6 +547,32 @@ test_markov_gcm <- function(data) {
 }
 
 
+#' Test Markov property using RCoT (if available)
+#'
+#' @param data Data list from generate_longitudinal_data
+#'
+#' @return List with RCoT test results
+test_markov_rcot <- function(data) {
+  if (!rcot_available) {
+    return(list(rcot_Z1_pvalue = NA, rcot_Z2_pvalue = NA))
+  }
+
+  # Conditioning set: Z1_t, Z2_t, X_t, Y_{t-1}
+  cond_set <- cbind(data$Z1_t, data$Z2_t, data$X_t, data$Y_tm1)
+
+  rcot_Z1 <- tryCatch(
+    RCIT::RCoT(data$Z1_tm1, data$Y_t, cond_set)$p,
+    error = function(e) NA
+  )
+  rcot_Z2 <- tryCatch(
+    RCIT::RCoT(data$Z2_tm1, data$Y_t, cond_set)$p,
+    error = function(e) NA
+  )
+
+  list(rcot_Z1_pvalue = rcot_Z1, rcot_Z2_pvalue = rcot_Z2)
+}
+
+
 #' Verify chain structure: Z1_t → Z2_t
 #'
 #' @param data Data list
@@ -606,6 +641,7 @@ run_single_longitudinal_simulation <- function(sim_id, n = N_SAMPLES, verbose = 
   # Markov property tests
   markov_result <- test_markov_property(data)
   gcm_result <- test_markov_gcm(data)
+  rcot_result <- test_markov_rcot(data)
 
   # Chain structure verification
   chain_result <- verify_chain_structure(data)
@@ -631,6 +667,9 @@ run_single_longitudinal_simulation <- function(sim_id, n = N_SAMPLES, verbose = 
     # GCM tests
     gcm_Z1_p = gcm_result$gcm_Z1_pvalue,
     gcm_Z2_p = gcm_result$gcm_Z2_pvalue,
+    # RCoT tests
+    rcot_Z1_p = rcot_result$rcot_Z1_pvalue,
+    rcot_Z2_p = rcot_result$rcot_Z2_pvalue,
     # Chain structure
     chain_cor = chain_result$cor_Z1_Z2_tm1,
     chain_pcor = chain_result$pcor_Z2t_Z1t_estimate,
@@ -820,6 +859,31 @@ cat(sprintf("\nKS test for uniformity of p-values:\n"))
 cat(sprintf("  Z1_{t-1}: p = %.3f\n", ks_Z1$p.value))
 cat(sprintf("  Z2_{t-1}: p = %.3f\n", ks_Z2$p.value))
 
+# RCoT summary if available
+if (rcot_available && sum(!is.na(results_df$rcot_Z1_p)) > 0) {
+  rcot_summary <- results_df %>%
+    filter(!is.na(rcot_Z1_p)) %>%
+    summarise(
+      mean_rcot_Z1 = mean(rcot_Z1_p, na.rm = TRUE),
+      sd_rcot_Z1 = sd(rcot_Z1_p, na.rm = TRUE),
+      reject_rate_Z1 = mean(rcot_Z1_p < 0.05, na.rm = TRUE),
+      mean_rcot_Z2 = mean(rcot_Z2_p, na.rm = TRUE),
+      sd_rcot_Z2 = sd(rcot_Z2_p, na.rm = TRUE),
+      reject_rate_Z2 = mean(rcot_Z2_p < 0.05, na.rm = TRUE)
+    )
+
+  ks_rcot_Z1 <- ks.test(results_df$rcot_Z1_p[!is.na(results_df$rcot_Z1_p)], "punif")
+  ks_rcot_Z2 <- ks.test(results_df$rcot_Z2_p[!is.na(results_df$rcot_Z2_p)], "punif")
+
+  cat(sprintf("\nRCoT Test p-values:\n"))
+  cat(sprintf("  Y_t ⊥ Z1_{t-1}: Mean p = %.3f (SD: %.3f), rejection rate = %.3f\n",
+              rcot_summary$mean_rcot_Z1, rcot_summary$sd_rcot_Z1, rcot_summary$reject_rate_Z1))
+  cat(sprintf("  Y_t ⊥ Z2_{t-1}: Mean p = %.3f (SD: %.3f), rejection rate = %.3f\n",
+              rcot_summary$mean_rcot_Z2, rcot_summary$sd_rcot_Z2, rcot_summary$reject_rate_Z2))
+  cat(sprintf("  KS test for uniformity: Z1 p = %.3f, Z2 p = %.3f\n",
+              ks_rcot_Z1$p.value, ks_rcot_Z2$p.value))
+}
+
 # GCM summary if available
 if (gcm_available && sum(!is.na(results_df$gcm_Z1_p)) > 0) {
   gcm_summary <- results_df %>%
@@ -906,6 +970,35 @@ p_markov_Z2 <- ggplot(results_df, aes(x = pcor_Z2_tm1_p)) +
   theme_minimal() +
   theme(plot.title = element_text(face = "bold", size = 12))
 
+# RCoT p-value histograms if available
+if (rcot_available && sum(!is.na(results_df$rcot_Z1_p)) > 0) {
+  p_rcot_Z1 <- ggplot(results_df %>% filter(!is.na(rcot_Z1_p)), aes(x = rcot_Z1_p)) +
+    geom_histogram(bins = 20, fill = "darkorange", color = "white", alpha = 0.7) +
+    geom_hline(yintercept = sum(!is.na(results_df$rcot_Z1_p)) / 20,
+               linetype = "dashed", color = "red") +
+    labs(
+      x = "p-value",
+      y = "Frequency",
+      title = expression(paste("RCoT test: ", Y[t], " \u22A5 ", Z[paste("1,t-1")], " | ", Z^t, ", ", X[t], ", ", Y[t-1])),
+      subtitle = sprintf("KS test for uniformity: p = %.3f", ks_rcot_Z1$p.value)
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold", size = 12))
+
+  p_rcot_Z2 <- ggplot(results_df %>% filter(!is.na(rcot_Z2_p)), aes(x = rcot_Z2_p)) +
+    geom_histogram(bins = 20, fill = "darkorange", color = "white", alpha = 0.7) +
+    geom_hline(yintercept = sum(!is.na(results_df$rcot_Z2_p)) / 20,
+               linetype = "dashed", color = "red") +
+    labs(
+      x = "p-value",
+      y = "Frequency",
+      title = expression(paste("RCoT test: ", Y[t], " \u22A5 ", Z[paste("2,t-1")], " | ", Z^t, ", ", X[t], ", ", Y[t-1])),
+      subtitle = sprintf("KS test for uniformity: p = %.3f", ks_rcot_Z2$p.value)
+    ) +
+    theme_minimal() +
+    theme(plot.title = element_text(face = "bold", size = 12))
+}
+
 # GCM p-value histograms if available
 if (gcm_available && sum(!is.na(results_df$gcm_Z1_p)) > 0) {
   p_gcm_Z1 <- ggplot(results_df %>% filter(!is.na(gcm_Z1_p)), aes(x = gcm_Z1_p)) +
@@ -950,6 +1043,14 @@ ggsave("results/gcm_pvalue_histogram_Z1.png", p_markov_Z1,
 ggsave("results/gcm_pvalue_histogram_Z2.png", p_markov_Z2,
        width = 8, height = 5, dpi = 300)
 
+# Save RCoT histograms if available
+if (rcot_available && exists("p_rcot_Z1")) {
+  ggsave("results/rcot_pvalue_histogram_Z1.png", p_rcot_Z1,
+         width = 8, height = 5, dpi = 300)
+  ggsave("results/rcot_pvalue_histogram_Z2.png", p_rcot_Z2,
+         width = 8, height = 5, dpi = 300)
+}
+
 write.csv(results_df, "results/causal_validation_longitudinal_results.csv", row.names = FALSE)
 
 summary_output <- list(
@@ -967,8 +1068,10 @@ summary_output <- list(
   summary_stats = summary_stats,
   markov_summary = markov_summary,
   ks_tests = list(
-    Z1_p = ks_Z1$p.value,
-    Z2_p = ks_Z2$p.value
+    pcor_Z1_p = ks_Z1$p.value,
+    pcor_Z2_p = ks_Z2$p.value,
+    rcot_Z1_p = if (rcot_available && exists("ks_rcot_Z1")) ks_rcot_Z1$p.value else NA,
+    rcot_Z2_p = if (rcot_available && exists("ks_rcot_Z2")) ks_rcot_Z2$p.value else NA
   ),
   hypothesis_tests = list(
     ipw = list(t = ipw_ttest$statistic, p = ipw_ttest$p.value),
@@ -981,8 +1084,12 @@ saveRDS(summary_output, "results/causal_validation_longitudinal_summary.rds")
 cat("\n=============================================================================\n")
 cat("Results saved to ./results/\n")
 cat("  - causal_validation_longitudinal_boxplot.png\n")
-cat("  - gcm_pvalue_histogram_Z1.png\n")
-cat("  - gcm_pvalue_histogram_Z2.png\n")
+cat("  - gcm_pvalue_histogram_Z1.png (pcor)\n")
+cat("  - gcm_pvalue_histogram_Z2.png (pcor)\n")
+if (rcot_available) {
+  cat("  - rcot_pvalue_histogram_Z1.png\n")
+  cat("  - rcot_pvalue_histogram_Z2.png\n")
+}
 cat("  - causal_validation_longitudinal_results.csv\n")
 cat("  - causal_validation_longitudinal_summary.rds\n")
 cat("=============================================================================\n")
