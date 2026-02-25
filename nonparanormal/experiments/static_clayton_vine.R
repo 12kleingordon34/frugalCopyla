@@ -656,3 +656,98 @@ for (sim_type in c("BN", "GAUSS")) {
 }
 
 cat("\n=============================================================================\n")
+
+# =============================================================================
+# Generate Summary CSVs for Paper
+# =============================================================================
+
+cat("\nGenerating summary CSVs...\n")
+
+# --- CI Summary ---
+ci_rows <- list()
+for (sim_type in c("BN", "GAUSS")) {
+  csv_path <- sprintf("results/static_clayton_%s.csv", sim_type)
+  if (!file.exists(csv_path)) next
+  res <- read.csv(csv_path)
+
+  for (test_name in c("pcor", "gcm", "rcot")) {
+    null_col <- paste0(test_name, "_null_p")
+    alt_col  <- paste0(test_name, "_alt_p")
+    if (!null_col %in% names(res)) next
+    null_ps <- res[[null_col]][!is.na(res[[null_col]])]
+    alt_ps  <- res[[alt_col]][!is.na(res[[alt_col]])]
+    if (length(null_ps) == 0) next
+
+    ks_null <- ks.test(null_ps, "punif")$p.value
+    alt_reject <- mean(alt_ps < 0.05, na.rm = TRUE)
+    null_reject <- mean(null_ps < 0.05, na.rm = TRUE)
+
+    ci_rows[[length(ci_rows) + 1]] <- data.frame(
+      simulator = sim_type, test = test_name,
+      null_ks_p = round(ks_null, 3),
+      null_reject_rate = round(null_reject, 3),
+      alt_reject_rate = round(alt_reject, 3),
+      stringsAsFactors = FALSE
+    )
+  }
+}
+ci_summary <- do.call(rbind, ci_rows)
+write.csv(ci_summary, "results/static_ci_summary.csv", row.names = FALSE)
+cat("  Saved results/static_ci_summary.csv\n")
+print(ci_summary)
+
+# --- Uniformity Summary ---
+unif_rows <- list()
+for (sim_type in c("BN", "GAUSS")) {
+  csv_path <- sprintf("results/static_clayton_%s.csv", sim_type)
+  if (!file.exists(csv_path)) next
+  res <- read.csv(csv_path)
+
+  for (var_info in list(
+    list(col = "ks_Z1_p", var = "Z1"),
+    list(col = "ks_Z2_p", var = "Z2"),
+    list(col = "ks_Z3_p", var = "Z3"),
+    list(col = "ks_Y_p",  var = "Y")
+  )) {
+    ps <- res[[var_info$col]]
+    unif_rows[[length(unif_rows) + 1]] <- data.frame(
+      simulator = sim_type, variable = var_info$var,
+      pct_pass = round(mean(ps > 0.05) * 100, 1),
+      mean_ks_p = round(mean(ps), 3),
+      stringsAsFactors = FALSE
+    )
+  }
+}
+unif_summary <- do.call(rbind, unif_rows)
+write.csv(unif_summary, "results/static_uniformity_summary.csv", row.names = FALSE)
+cat("  Saved results/static_uniformity_summary.csv\n")
+print(unif_summary)
+
+# --- Self-Diagnosis ---
+cat("\n=== SELF-DIAGNOSIS ===\n")
+gauss_ci <- ci_summary[ci_summary$simulator == "GAUSS", ]
+bn_ci <- ci_summary[ci_summary$simulator == "BN", ]
+
+for (i in seq_len(nrow(gauss_ci))) {
+  ok <- gauss_ci$null_ks_p[i] > 0.05
+  cat(sprintf("[%s] GAUSS %s null KS p = %.3f (> 0.05)\n",
+              ifelse(ok, "OK", "WARN"), gauss_ci$test[i], gauss_ci$null_ks_p[i]))
+}
+
+for (i in seq_len(nrow(ci_summary))) {
+  if (ci_summary$test[i] == "rcot") {
+    ok <- ci_summary$alt_reject_rate[i] > 0.05
+    cat(sprintf("[%s] %s RCoT collider rejection = %.3f (> 0.05)\n",
+                ifelse(ok, "OK", "WARN"), ci_summary$simulator[i],
+                ci_summary$alt_reject_rate[i]))
+  }
+}
+
+unif_gauss <- unif_summary[unif_summary$simulator == "GAUSS", ]
+for (i in seq_len(nrow(unif_gauss))) {
+  ok <- unif_gauss$pct_pass[i] >= 90 & unif_gauss$pct_pass[i] <= 99
+  cat(sprintf("[%s] GAUSS %s uniformity pass rate = %.1f%%\n",
+              ifelse(ok, "OK", "WARN"), unif_gauss$variable[i], unif_gauss$pct_pass[i]))
+}
+
+cat("=== END SELF-DIAGNOSIS ===\n")

@@ -1,0 +1,5 @@
+"test","variable","ks_p_uniformity","rejection_rate","mean_pvalue"
+"pcor","Z1_tm1",0.928,0.055,0.495
+"pcor","Z2_tm1",0.618,0.04,0.507
+"rcot","Z1_tm1",0.183,0.03,0.526
+"rcot","Z2_tm1",0.808,0.05,0.49

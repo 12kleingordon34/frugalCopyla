@@ -1,0 +1,7 @@
+"simulator","test","null_ks_p","null_reject_rate","alt_reject_rate"
+"BN","pcor",0.189,0.095,0.13
+"BN","gcm",0.066,0.075,0.08
+"BN","rcot",0.001,0.05,0.705
+"GAUSS","pcor",0.905,0.045,0.39
+"GAUSS","gcm",0.374,0.06,0.665
+"GAUSS","rcot",0.16,0.055,0.97

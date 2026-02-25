@@ -352,6 +352,10 @@ generate_longitudinal_data <- function(n, seed) {
     ps_X_t_true = ps_X_t_true,
     # Ranks (for verification)
     Y_t_ranks = U_Y_t,
+    # Constructed marginal ranks (copula inputs)
+    tilde_U_Z1_t = U_Z1_t_marg,
+    tilde_U_Z2_t = U_Z2_t_marg,
+    tilde_U_Y_tm1 = U_Y_tm1_marg,
     # Copula info (for debugging)
     R_cond = R_cond,
     r_Yt_cond = r_Yt_cond,
@@ -676,6 +680,10 @@ run_single_longitudinal_simulation <- function(sim_id, n = N_SAMPLES, verbose = 
     chain_pcor_p = chain_result$pcor_Z2t_Z1t_pvalue,
     # Rank uniformity
     rank_ks_p = rank_result$ks_pvalue,
+    # Constructed rank uniformity
+    ks_tU_Z1_p = ks.test(data$tilde_U_Z1_t, "punif")$p.value,
+    ks_tU_Z2_p = ks.test(data$tilde_U_Z2_t, "punif")$p.value,
+    ks_tU_Y_tm1_p = ks.test(data$tilde_U_Y_tm1, "punif")$p.value,
     # Additional info
     prop_treated = mean(data$X_t),
     mean_ps = mean(ps_X_t_hat),
@@ -1154,3 +1162,113 @@ cat("===========================================================================
 print(p_boxplot)
 print(p_markov_Z1)
 print(p_markov_Z2)
+
+# =============================================================================
+# Generate Summary CSVs for Paper
+# =============================================================================
+
+cat("\nGenerating summary CSVs...\n")
+
+# --- Uniformity Summary ---
+unif_vars <- list(
+  list(col = "rank_ks_p",     var = "U_Y_t"),
+  list(col = "ks_tU_Z1_p",   var = "tilde_U_Z1_t"),
+  list(col = "ks_tU_Z2_p",   var = "tilde_U_Z2_t"),
+  list(col = "ks_tU_Y_tm1_p", var = "tilde_U_Y_tm1")
+)
+unif_rows <- lapply(unif_vars, function(v) {
+  ps <- results_df[[v$col]]
+  data.frame(
+    variable = v$var,
+    pct_pass = round(mean(ps > 0.05, na.rm = TRUE) * 100, 1),
+    mean_ks_p = round(mean(ps, na.rm = TRUE), 3),
+    stringsAsFactors = FALSE
+  )
+})
+unif_summary <- do.call(rbind, unif_rows)
+write.csv(unif_summary, "results/longitudinal_uniformity_summary.csv", row.names = FALSE)
+cat("  Saved results/longitudinal_uniformity_summary.csv\n")
+print(unif_summary)
+
+# --- Markov p-value Summary ---
+markov_rows <- list()
+
+# pcor
+for (var_name in c("Z1", "Z2")) {
+  pcol <- paste0("pcor_", var_name, "_tm1_p")
+  ps <- results_df[[pcol]]
+  ks_p <- ks.test(ps, "punif")$p.value
+  markov_rows[[length(markov_rows) + 1]] <- data.frame(
+    test = "pcor", variable = paste0(var_name, "_tm1"),
+    ks_p_uniformity = round(ks_p, 3),
+    rejection_rate = round(mean(ps < 0.05), 3),
+    mean_pvalue = round(mean(ps), 3),
+    stringsAsFactors = FALSE
+  )
+}
+
+# RCoT
+if (rcot_available && sum(!is.na(results_df$rcot_Z1_p)) > 0) {
+  for (var_name in c("Z1", "Z2")) {
+    rcol <- paste0("rcot_", var_name, "_p")
+    ps <- results_df[[rcol]][!is.na(results_df[[rcol]])]
+    ks_p <- ks.test(ps, "punif")$p.value
+    markov_rows[[length(markov_rows) + 1]] <- data.frame(
+      test = "rcot", variable = paste0(var_name, "_tm1"),
+      ks_p_uniformity = round(ks_p, 3),
+      rejection_rate = round(mean(ps < 0.05), 3),
+      mean_pvalue = round(mean(ps), 3),
+      stringsAsFactors = FALSE
+    )
+  }
+}
+
+markov_summary_csv <- do.call(rbind, markov_rows)
+write.csv(markov_summary_csv, "results/longitudinal_markov_pvalues.csv", row.names = FALSE)
+cat("  Saved results/longitudinal_markov_pvalues.csv\n")
+print(markov_summary_csv)
+
+# --- ATE Summary ---
+ate_rows <- list()
+for (est in c("naive", "ipw", "gcomp", "aipw")) {
+  col <- paste0(est, "_ate")
+  vals <- results_df[[col]]
+  bias <- vals - results_df$true_ate
+  ttest_p <- if (est == "naive") NA else t.test(bias)$p.value
+  ate_rows[[length(ate_rows) + 1]] <- data.frame(
+    estimator = est,
+    mean = round(mean(vals), 4),
+    bias = round(mean(bias), 4),
+    sd = round(sd(vals), 4),
+    rmse = round(sqrt(mean(bias^2)), 4),
+    pvalue = if (is.na(ttest_p)) NA else round(ttest_p, 3),
+    stringsAsFactors = FALSE
+  )
+}
+ate_summary <- do.call(rbind, ate_rows)
+write.csv(ate_summary, "results/longitudinal_ate_results.csv", row.names = FALSE)
+cat("  Saved results/longitudinal_ate_results.csv\n")
+print(ate_summary)
+
+# --- Self-Diagnosis ---
+cat("\n=== SELF-DIAGNOSIS ===\n")
+for (i in seq_len(nrow(unif_summary))) {
+  ok <- unif_summary$pct_pass[i] >= 90 & unif_summary$pct_pass[i] <= 99
+  cat(sprintf("[%s] %s uniformity pass rate = %.1f%%\n",
+              ifelse(ok, "OK", "WARN"), unif_summary$variable[i], unif_summary$pct_pass[i]))
+}
+
+for (i in seq_len(nrow(markov_summary_csv))) {
+  ok_rate <- markov_summary_csv$rejection_rate[i] < 0.15
+  cat(sprintf("[%s] %s %s rejection rate = %.3f (< 0.15)\n",
+              ifelse(ok_rate, "OK", "WARN"), markov_summary_csv$test[i],
+              markov_summary_csv$variable[i], markov_summary_csv$rejection_rate[i]))
+}
+
+bias_ok <- all(abs(ate_summary$bias[ate_summary$estimator != "naive"]) < 0.05)
+cat(sprintf("[%s] All causal estimators |bias| < 0.05\n", ifelse(bias_ok, "OK", "WARN")))
+naive_biased <- abs(ate_summary$bias[ate_summary$estimator == "naive"]) > 0.05
+cat(sprintf("[%s] Naive OLS is biased (|bias| = %.3f)\n",
+            ifelse(naive_biased, "OK", "WARN"),
+            abs(ate_summary$bias[ate_summary$estimator == "naive"])))
+cat("=== END SELF-DIAGNOSIS ===\n")
