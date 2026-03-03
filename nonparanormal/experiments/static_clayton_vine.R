@@ -184,7 +184,7 @@ as0105 <- function(p) ifelse(is.na(p), NA, p < 0.05)
 #'
 #' Null: Z2 _|_ Y | (Z1, Z3) -- should not reject
 #' Alt:  Z1 _/|_ Z3 | (Y, Z2) -- should reject (collider)
-run_ci_tests <- function(Z1, Z2, Z3, Y) {
+run_ci_tests <- function(Z1, Z2, Z3, Y, rcot_seed = NULL) {
   cond_null <- cbind(Z1, Z3)
   cond_alt  <- cbind(Y, Z2)
 
@@ -199,14 +199,16 @@ run_ci_tests <- function(Z1, Z2, Z3, Y) {
       error = function(e) NA)
   }
 
-  # RCoT
+  # RCoT (seed passed via seed= arg; external set.seed() is ineffective
+  # because random_fourier_features() internally calls set.seed(seed))
   rcot_null_p <- rcot_alt_p <- NA
   if (rcot_available) {
     rcot_null_p <- tryCatch(
-      RCIT::RCoT(Z2, Y, cond_null)$p,
+      RCIT::RCoT(Z2, Y, cond_null, seed = rcot_seed)$p,
       error = function(e) NA)
     rcot_alt_p <- tryCatch(
-      RCIT::RCoT(Z1, Z3, cond_alt)$p,
+      RCIT::RCoT(Z1, Z3, cond_alt,
+                 seed = if (!is.null(rcot_seed)) rcot_seed + 1L)$p,
       error = function(e) NA)
   }
 
@@ -312,7 +314,8 @@ run_single_bn_simulation <- function(sim_id, n = N_SAMPLES) {
   Y <- qnorm(u_Y)
 
   # CI tests use observed Gamma Z
-  ci <- run_ci_tests(bn_data$Z1, bn_data$Z2, bn_data$Z3, Y)
+  ci <- run_ci_tests(bn_data$Z1, bn_data$Z2, bn_data$Z3, Y,
+                     rcot_seed = SEED_BASE * 5000L + sim_id)
   diag_df <- run_diagnostics(tilde_U, u_Y, cond_ranks = bn_data$cond_ranks)
 
   cbind(
@@ -340,7 +343,8 @@ run_single_gauss_simulation <- function(sim_id, n = N_SAMPLES) {
 
   # CI tests use latent Gaussian scores (avoids boundary effects)
   ci <- run_ci_tests(gauss$Q_tilde_Z[, 1], gauss$Q_tilde_Z[, 2],
-                     gauss$Q_tilde_Z[, 3], Y)
+                     gauss$Q_tilde_Z[, 3], Y,
+                     rcot_seed = SEED_BASE * 5000L + sim_id)
   diag_df <- run_diagnostics(tilde_U, u_Y, cond_ranks = NULL)
 
   cbind(
