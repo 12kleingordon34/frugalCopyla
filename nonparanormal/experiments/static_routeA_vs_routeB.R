@@ -415,3 +415,61 @@ for (route in c("A", "B")) {
 }
 
 cat("\n=== END SELF-DIAGNOSIS ===\n")
+
+# =============================================================================
+# Generate LaTeX Table for Paper (Route A vs Route B CI Diagnostics)
+# =============================================================================
+
+cat("\nGenerating LaTeX table for Route A vs Route B CI diagnostics...\n")
+
+tables_dir <- "../Hybrid-Frugal-Paper/tables"
+if (!dir.exists(tables_dir)) dir.create(tables_dir, recursive = TRUE)
+
+# Read the summary CSV we just wrote
+ci_summary <- read.csv("results/static_routeA_vs_routeB_ci_summary.csv",
+                        stringsAsFactors = FALSE)
+
+# Test display names
+test_labels <- c(pcor = "Partial cor.\\ ", gcm = "GCM", rcot = "RCoT")
+
+tex_lines <- c(
+  "\\begin{table}[htbp]",
+  "\\centering",
+  paste0("\\caption{Route A vs Route B: CI test summary for the static $\\mathcal{M}_B$ model. ",
+         "Null KS $p$: Kolmogorov--Smirnov test for uniformity of null p-values (larger is better). ",
+         "The null rejection rate represents fraction of replications rejecting ",
+         "$Z_2 \\perp\\!\\!\\!\\perp Y \\mid Z_1, Z_3$ at $\\alpha = 0.05$ (target $\\approx 0.05$). ",
+         "The collider rejection rate represents fraction rejecting ",
+         "$Z_1 \\perp\\!\\!\\!\\perp Z_3 \\mid Y, Z_2$, with larger values indicating greater power. }"),
+  "\\label{tab:routeAB-ci-summary}",
+  "\\begin{tabular}{llccc}",
+  "\\toprule",
+  "\\textbf{Route} & \\textbf{Test} & \\textbf{Null KS $p$} & \\textbf{Null rej.\\ rate} & \\textbf{Collider rej.\\ rate} \\\\",
+  "\\midrule"
+)
+
+for (route in c("A", "B")) {
+  route_data <- ci_summary[ci_summary$route == route, ]
+  for (i in seq_along(test_labels)) {
+    test_name <- names(test_labels)[i]
+    label <- test_labels[i]
+    row <- route_data[route_data$test == test_name, ]
+    tex_lines <- c(tex_lines, sprintf(
+      "%s & %s & %.3f & %.3f & %.3f \\\\",
+      route, label, row$null_ks_p, row$null_reject_rate, row$alt_reject_rate
+    ))
+  }
+  if (route == "A") {
+    tex_lines <- c(tex_lines, "\\addlinespace")
+  }
+}
+
+tex_lines <- c(tex_lines,
+  "\\bottomrule",
+  "\\end{tabular}",
+  "\\end{table}"
+)
+
+tex_path <- file.path(tables_dir, "static_routeAB_ci_summary.tex")
+writeLines(tex_lines, tex_path)
+cat(sprintf("  Saved %s\n", tex_path))

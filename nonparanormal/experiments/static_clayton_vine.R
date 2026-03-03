@@ -755,3 +755,71 @@ for (i in seq_len(nrow(unif_gauss))) {
 }
 
 cat("=== END SELF-DIAGNOSIS ===\n")
+
+# =============================================================================
+# Generate LaTeX Table for Paper (CI Diagnostics)
+# =============================================================================
+
+cat("\nGenerating LaTeX table for CI diagnostics...\n")
+
+tables_dir <- "../Hybrid-Frugal-Paper/tables"
+if (!dir.exists(tables_dir)) dir.create(tables_dir, recursive = TRUE)
+
+# Read the summary CSV we just wrote
+ci_summary <- read.csv("results/static_ci_summary.csv", stringsAsFactors = FALSE)
+
+# Test display names for the table
+test_labels <- c(pcor = "pcor", gcm = "GCM", rcot = "RCoT")
+
+# Build the LaTeX table matching the existing format in nonparanormal.tex
+tex_lines <- c(
+  "\\begin{table}[htbp]",
+  "\\centering",
+  paste0("\\caption{CI diagnostics for model $\\mathcal{M}_B$ (\\Cref{fig:M2-dag}), ",
+         "based on 200 Monte Carlo replications with $N=1000$ each. ",
+         "For the null relation $Z_2 \\indep Y \\mid (Z_1,Z_3)$ we report the KS $p$-value ",
+         "for uniformity of test $p$-values. For the collider diagnostic ",
+         "$Z_1 \\nindep Z_3 \\mid (Y,Z_2)$ we report the empirical rejection rate ",
+         "at level $\\alpha=0.05$.}"),
+  "\\label{tab:ci-tests-MB}",
+  "\\begin{tabularx}{\\linewidth}{@{}p{0.44\\linewidth}p{0.24\\linewidth}cc@{}}",
+  "\\toprule",
+  "\\textbf{Case / Metric} & \\textbf{CI diagnostic} & \\textbf{BN (B)} & \\textbf{GAUSS (A)} \\\\",
+  "\\midrule"
+)
+
+# Null rows (KS p-value for uniformity)
+for (i in seq_along(test_labels)) {
+  test_name <- names(test_labels)[i]
+  label <- test_labels[i]
+  bn_val   <- ci_summary$null_ks_p[ci_summary$simulator == "BN"   & ci_summary$test == test_name]
+  gauss_val <- ci_summary$null_ks_p[ci_summary$simulator == "GAUSS" & ci_summary$test == test_name]
+  prefix <- if (i == 1) "\\textit{Null / KS $p$-value}" else ""
+  tex_lines <- c(tex_lines, sprintf(
+    "%s & %s & %.3f & %.3f \\\\", prefix, label, bn_val, gauss_val
+  ))
+}
+
+tex_lines <- c(tex_lines, "\\addlinespace")
+
+# Collider rows (rejection rate)
+for (i in seq_along(test_labels)) {
+  test_name <- names(test_labels)[i]
+  label <- test_labels[i]
+  bn_val   <- ci_summary$alt_reject_rate[ci_summary$simulator == "BN"   & ci_summary$test == test_name]
+  gauss_val <- ci_summary$alt_reject_rate[ci_summary$simulator == "GAUSS" & ci_summary$test == test_name]
+  prefix <- if (i == 1) "\\textit{Collider / Rejection rate at $\\alpha=0.05$}" else ""
+  tex_lines <- c(tex_lines, sprintf(
+    "%s & %s & %.3f & %.3f \\\\", prefix, label, bn_val, gauss_val
+  ))
+}
+
+tex_lines <- c(tex_lines,
+  "\\bottomrule",
+  "\\end{tabularx}",
+  "\\end{table}"
+)
+
+tex_path <- file.path(tables_dir, "static_ci_diagnostics.tex")
+writeLines(tex_lines, tex_path)
+cat(sprintf("  Saved %s\n", tex_path))
