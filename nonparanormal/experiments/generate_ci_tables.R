@@ -41,14 +41,14 @@ if (!file.exists(csv_path)) {
     "\\begin{table}[htbp]",
     "\\centering",
     paste0(
-      "\\caption{CI diagnostics for model $\\mathcal{M}_B$ (\\Cref{fig:M2-dag}), ",
+      "\\caption{CI diagnostics for model $\\mathcal{M}_A$ (\\Cref{fig:MA-dag}), ",
       "based on 200 Monte Carlo replications with $N=1000$ each. ",
       "For the null relation $Z_2 \\indep Y \\mid (Z_1,Z_3)$ we report the KS $p$-value ",
       "for uniformity of test $p$-values. For the collider diagnostic ",
       "$Z_1 \\nindep Z_3 \\mid (Y,Z_2)$ we report the empirical rejection rate ",
       "at level $\\alpha=0.05$.}"
     ),
-    "\\label{tab:ci-tests-MB}",
+    "\\label{tab:ci-tests-MA}",
     "\\begin{tabularx}{\\linewidth}{@{}p{0.44\\linewidth}p{0.24\\linewidth}cc@{}}",
     "\\toprule",
     "\\textbf{Case / Metric} & \\textbf{CI diagnostic} & \\textbf{BN (B)} & \\textbf{GAUSS (A)} \\\\",
@@ -107,7 +107,7 @@ if (!file.exists(csv_path)) {
     "\\begin{table}[htbp]",
     "\\centering",
     paste0(
-      "\\caption{Route A vs Route B: CI test summary for the static $\\mathcal{M}_B$ model. ",
+      "\\caption{Route A vs Route B: CI test summary for the static $\\mathcal{M}_A$ model. ",
       "Null KS $p$: Kolmogorov--Smirnov test for uniformity of null p-values (larger is better). ",
       "The null rejection rate represents fraction of replications rejecting ",
       "$Z_2 \\perp\\!\\!\\!\\perp Y \\mid Z_1, Z_3$ at $\\alpha = 0.05$ (target $\\approx 0.05$). ",

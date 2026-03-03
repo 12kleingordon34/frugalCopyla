@@ -435,7 +435,7 @@ test_labels <- c(pcor = "Partial cor.\\ ", gcm = "GCM", rcot = "RCoT")
 tex_lines <- c(
   "\\begin{table}[htbp]",
   "\\centering",
-  paste0("\\caption{Route A vs Route B: CI test summary for the static $\\mathcal{M}_B$ model. ",
+  paste0("\\caption{Route A vs Route B: CI test summary for the static $\\mathcal{M}_A$ model. ",
          "Null KS $p$: Kolmogorov--Smirnov test for uniformity of null p-values (larger is better). ",
          "The null rejection rate represents fraction of replications rejecting ",
          "$Z_2 \\perp\\!\\!\\!\\perp Y \\mid Z_1, Z_3$ at $\\alpha = 0.05$ (target $\\approx 0.05$). ",
