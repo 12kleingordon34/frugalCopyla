@@ -51,33 +51,33 @@ if (!file.exists(csv_path)) {
     "\\label{tab:ci-tests-MA}",
     "\\begin{tabularx}{\\linewidth}{@{}p{0.44\\linewidth}p{0.24\\linewidth}cc@{}}",
     "\\toprule",
-    "\\textbf{Case / Metric} & \\textbf{CI diagnostic} & \\textbf{BN (B)} & \\textbf{GAUSS (A)} \\\\",
+    "\\textbf{Case / Metric} & \\textbf{CI diagnostic} & \\textbf{Route A} & \\textbf{Route B} \\\\",
     "\\midrule"
   )
 
-  # Null rows
+  # Null rows (Route A = GAUSS first, Route B = BN second)
   for (i in seq_along(test_labels)) {
     test_name <- names(test_labels)[i]
     label <- test_labels[i]
-    bn_val   <- ci_summary$null_ks_p[ci_summary$simulator == "BN"   & ci_summary$test == test_name]
     gauss_val <- ci_summary$null_ks_p[ci_summary$simulator == "GAUSS" & ci_summary$test == test_name]
+    bn_val   <- ci_summary$null_ks_p[ci_summary$simulator == "BN"   & ci_summary$test == test_name]
     prefix <- if (i == 1) "\\textit{Null / KS $p$-value}" else ""
     tex_lines <- c(tex_lines, sprintf(
-      "%s & %s & %.3f & %.3f \\\\", prefix, label, bn_val, gauss_val
+      "%s & %s & %.3f & %.3f \\\\", prefix, label, gauss_val, bn_val
     ))
   }
 
   tex_lines <- c(tex_lines, "\\addlinespace")
 
-  # Collider rows
+  # Collider rows (Route A = GAUSS first, Route B = BN second)
   for (i in seq_along(test_labels)) {
     test_name <- names(test_labels)[i]
     label <- test_labels[i]
-    bn_val   <- ci_summary$alt_reject_rate[ci_summary$simulator == "BN"   & ci_summary$test == test_name]
     gauss_val <- ci_summary$alt_reject_rate[ci_summary$simulator == "GAUSS" & ci_summary$test == test_name]
+    bn_val   <- ci_summary$alt_reject_rate[ci_summary$simulator == "BN"   & ci_summary$test == test_name]
     prefix <- if (i == 1) "\\textit{Collider / Rejection rate at $\\alpha=0.05$}" else ""
     tex_lines <- c(tex_lines, sprintf(
-      "%s & %s & %.3f & %.3f \\\\", prefix, label, bn_val, gauss_val
+      "%s & %s & %.3f & %.3f \\\\", prefix, label, gauss_val, bn_val
     ))
   }
 

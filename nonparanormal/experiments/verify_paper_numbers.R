@@ -89,28 +89,28 @@ if (!file.exists(csv_path)) {
   # Expected order: null rows (pcor, gcm, rcot), then collider rows (pcor, gcm, rcot)
   test_order <- c("pcor", "gcm", "rcot")
 
-  # Null section: each row has BN null_ks_p and GAUSS null_ks_p
+  # Null section: each row has Route A (GAUSS) then Route B (BN) null_ks_p
   for (i in seq_along(test_order)) {
     test <- test_order[i]
     nums <- extract_numbers(data_rows[i])
-    bn_expected   <- csv$null_ks_p[csv$simulator == "BN"    & csv$test == test]
     gauss_expected <- csv$null_ks_p[csv$simulator == "GAUSS" & csv$test == test]
-    check(sprintf("Null %s BN", test), bn_expected, nums[1])
-    check(sprintf("Null %s GAUSS", test), gauss_expected, nums[2])
+    bn_expected   <- csv$null_ks_p[csv$simulator == "BN"    & csv$test == test]
+    check(sprintf("Null %s Route A", test), gauss_expected, nums[1])
+    check(sprintf("Null %s Route B", test), bn_expected, nums[2])
   }
 
-  # Collider section: each row has BN alt_reject_rate and GAUSS alt_reject_rate
+  # Collider section: each row has Route A (GAUSS) then Route B (BN) alt_reject_rate
   for (i in seq_along(test_order)) {
     test <- test_order[i]
     row_idx <- i + 3  # offset past null rows
     nums <- extract_numbers(data_rows[row_idx])
     # The collider row for first test also has 0.05 from alpha in the prefix
-    # Filter: take last 2 numbers (they are the BN and GAUSS values)
+    # Filter: take last 2 numbers (they are the Route A and Route B values)
     if (length(nums) > 2) nums <- tail(nums, 2)
-    bn_expected   <- csv$alt_reject_rate[csv$simulator == "BN"    & csv$test == test]
     gauss_expected <- csv$alt_reject_rate[csv$simulator == "GAUSS" & csv$test == test]
-    check(sprintf("Collider %s BN", test), bn_expected, nums[1])
-    check(sprintf("Collider %s GAUSS", test), gauss_expected, nums[2])
+    bn_expected   <- csv$alt_reject_rate[csv$simulator == "BN"    & csv$test == test]
+    check(sprintf("Collider %s Route A", test), gauss_expected, nums[1])
+    check(sprintf("Collider %s Route B", test), bn_expected, nums[2])
   }
   cat(sprintf("  Checked %d values from static_ci_diagnostics.tex\n", 12))
 }
@@ -197,15 +197,23 @@ if (!file.exists(csv_path)) {
     }
   }
 
+  # TeX row order is now Route A (GAUSS) first, Route B (BN) second within each variable.
+  # CSV row order is BN first, GAUSS second. Build a mapping.
+  # Variables in order: tilde_U_Z1, tilde_U_Z2, tilde_U_Z3, U_Y
+  # TeX rows: GAUSS-Z1, BN-Z1, GAUSS-Z2, BN-Z2, GAUSS-Z3, BN-Z3, GAUSS-Y, BN-Y
+  # CSV rows: BN-Z1(1), GAUSS-Z1(2), BN-Z2(3), GAUSS-Z2(4), BN-Z3(5), GAUSS-Z3(6), BN-Y(7), GAUSS-Y(8)
+  tex_to_csv <- c(2, 1, 4, 3, 6, 5, 8, 7)  # maps tex row index to csv row index
+
   checked <- 0
-  for (i in seq_len(min(nrow(csv), length(data_rows)))) {
+  for (i in seq_len(min(length(tex_to_csv), length(data_rows)))) {
     nums <- extract_numbers(data_rows[i])
+    csv_i <- tex_to_csv[i]
     # Columns: pct_pass, mean_ks_p, rank_mean, rank_var
-    if (length(nums) >= 4) {
-      check(sprintf("Unif row %d pct_pass", i), csv$pct_pass[i], nums[1])
-      check(sprintf("Unif row %d mean_ks_p", i), csv$mean_ks_p[i], nums[2])
-      check(sprintf("Unif row %d rank_mean", i), csv$rank_mean[i], nums[3])
-      check(sprintf("Unif row %d rank_var", i), csv$rank_var[i], nums[4])
+    if (length(nums) >= 4 && csv_i <= nrow(csv)) {
+      check(sprintf("Unif row %d pct_pass", i), csv$pct_pass[csv_i], nums[1])
+      check(sprintf("Unif row %d mean_ks_p", i), csv$mean_ks_p[csv_i], nums[2])
+      check(sprintf("Unif row %d rank_mean", i), csv$rank_mean[csv_i], nums[3])
+      check(sprintf("Unif row %d rank_var", i), csv$rank_var[csv_i], nums[4])
       checked <- checked + 4
     }
   }
